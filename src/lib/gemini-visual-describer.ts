@@ -34,7 +34,7 @@ export class GeminiVisualDescriber {
     }
 
     const results: FrameDescriptionResult[] = [];
-    for (const batch of chunk(inputs, 3)) {
+    for (const batch of chunk(inputs, 5)) {
       const batchResults = await Promise.all(batch.map((input) => this.describeFrame(input)));
       results.push(...batchResults);
     }

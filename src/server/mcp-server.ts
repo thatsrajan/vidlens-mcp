@@ -12,6 +12,7 @@ import { MediaStore } from "../lib/media-store.js";
 import { MediaDownloader } from "../lib/media-downloader.js";
 import { ThumbnailExtractor } from "../lib/thumbnail-extractor.js";
 import { parseVideoId } from "../lib/id-parsing.js";
+import { generateVisualReport, openInBrowser, type VisualReportFrame } from "../lib/visual-report.js";
 
 export const tools: Tool[] = [
   {
@@ -683,10 +684,76 @@ export function createYouTubeMcpServer(service = new YouTubeService()): Server {
     const dryRun = readBoolean(args, "dryRun", false);
 
     try {
+      const toolName = request.params.name;
       const result = await executeTool(
-        service, request.params.name, args, dryRun,
+        service, toolName, args, dryRun,
         mediaStore, mediaDownloader, thumbnailExtractor,
       );
+
+      // Visual search: auto-generate HTML gallery, strip framePaths from JSON
+      if (toolName === "searchVisualContent" || toolName === "findSimilarFrames") {
+        const resultObj = result as Record<string, unknown> | null;
+        const matches = ((resultObj?.results ?? resultObj?.matches ?? []) as Array<Record<string, unknown>>);
+
+        if (matches.length > 0) {
+          const query = (resultObj?.query ?? "visual search") as string;
+
+          // Strip framePaths so Claude can't try to read files directly
+          const cleanedMatches = matches.map(({ framePath, ...rest }) => rest);
+          const cleanedResult = { ...resultObj, results: cleanedMatches };
+
+          // Build HTML gallery and open in browser
+          const frames: VisualReportFrame[] = matches.slice(0, 10).map((m) => ({
+            framePath: (m.framePath ?? "") as string,
+            videoId: (m.videoId ?? "") as string,
+            videoTitle: (m.sourceVideoTitle ?? m.videoTitle ?? "") as string,
+            timestampSec: (m.timestampSec ?? m.tStartSec ?? 0) as number,
+            timestampLabel: (m.timestampLabel ?? "") as string,
+            ocrText: (m.ocrText ?? "") as string,
+            description: (m.visualDescription ?? m.description ?? m.explanation ?? "") as string,
+            score: (m.score ?? m.similarity) as number | undefined,
+            matchedOn: (m.matchedOn ?? []) as string[],
+            sourceVideoUrl: (m.sourceVideoUrl ?? "") as string,
+          }));
+
+          const report = generateVisualReport({
+            query,
+            frames,
+            reportType: "search",
+            searchMeta: {
+              searchedFrames: resultObj?.searchedFrames as number | undefined,
+              searchedVideos: resultObj?.searchedVideos as number | undefined,
+              queryMode: resultObj?.queryMode as string | undefined,
+            },
+          });
+
+          await openInBrowser(report.filePath);
+
+          return {
+            content: [
+              { type: "text" as const, text: JSON.stringify(cleanedResult, null, 2) },
+              { type: "text" as const, text: `\n\nA visual gallery with ${frames.length} frame images has been opened in the user's browser at: ${report.filePath}\nPresent the text results above to the user. The images are already visible in their browser — do NOT try to copy, read, or display frame files.` },
+            ],
+          };
+        }
+      }
+
+      // Index visual: strip framePaths, show summary only
+      if (toolName === "indexVisualContent") {
+        const resultObj = result as Record<string, unknown> | null;
+        const evidence = ((resultObj?.evidence ?? []) as Array<Record<string, unknown>>);
+        if (evidence.length > 0) {
+          const cleanedEvidence = evidence.map(({ framePath, ...rest }) => rest);
+          const cleanedResult = { ...resultObj, evidence: cleanedEvidence };
+          return {
+            content: [
+              { type: "text" as const, text: JSON.stringify(cleanedResult, null, 2) },
+              { type: "text" as const, text: `\n\n${evidence.length} frames indexed. Do NOT try to read or copy frame files from disk.` },
+            ],
+          };
+        }
+      }
+
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
       };

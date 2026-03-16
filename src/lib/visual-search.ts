@@ -347,7 +347,7 @@ export class VisualSearchEngine {
     if (!videoAssetPath && (params.autoDownload ?? true)) {
       const download = await this.mediaDownloader.download({
         videoIdOrUrl: videoId,
-        format: params.downloadFormat ?? "worst_video",
+        format: params.downloadFormat ?? "best_video",
       });
       videoAssetPath = download.asset.filePath;
       autoDownloaded = true;
@@ -369,18 +369,20 @@ export class VisualSearchEngine {
     const existingByPath = new Map(this.store.listFrames({ videoId }).map((frame) => [frame.framePath, frame]));
     const pendingAssets = keyframes.assets.filter((asset) => params.forceReindex || !existingByPath.has(asset.filePath));
 
-    const analyses = pendingAssets.length > 0
-      ? await this.visionAnalyzer.analyzeFrames(pendingAssets.map((asset) => asset.filePath))
-      : [];
-    const analysisByPath = new Map(analyses.map((analysis) => [analysis.framePath, analysis]));
-
-    const descriptions = descriptionProvider === "gemini"
-      ? await this.geminiDescriber.describeFrames(pendingAssets.map((asset) => ({
+    // Run OCR and Gemini descriptions IN PARALLEL — they're independent
+    const [analyses, descriptions] = await Promise.all([
+      pendingAssets.length > 0
+        ? this.visionAnalyzer.analyzeFrames(pendingAssets.map((asset) => asset.filePath))
+        : Promise.resolve([]),
+      descriptionProvider === "gemini"
+      ? this.geminiDescriber.describeFrames(pendingAssets.map((asset) => ({
         framePath: asset.filePath,
         videoId,
         timestampSec: asset.timestampSec ?? 0,
       })))
-      : [];
+      : Promise.resolve([]),
+    ]);
+    const analysisByPath = new Map(analyses.map((analysis) => [analysis.framePath, analysis]));
     const descriptionByPath = new Map(descriptions.map((item) => [item.framePath, item.description]));
 
     const retrievalTexts = pendingAssets.map((asset) => {

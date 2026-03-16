@@ -51,7 +51,7 @@ export class ThumbnailExtractor {
     const intervalSec = options.intervalSec ?? 30;
     const maxFrames = options.maxFrames ?? 20;
     const imageFormat = options.imageFormat ?? "jpg";
-    const width = options.width ?? 640;
+    const width = options.width ?? 1280;
 
     // Resolve video file path
     const videoPath = options.videoPath ?? this.findVideoFile(options.videoId);
