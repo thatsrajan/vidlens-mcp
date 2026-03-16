@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" alt="VidLens" width="400" />
+  <img src="assets/vidlens-logo.png" alt="VidLens" width="400" />
 </p>
 
 <p align="center">
@@ -22,6 +22,37 @@
 VidLens is a [Model Context Protocol](https://modelcontextprotocol.io/) server that gives AI agents deep, reliable access to YouTube. Not just transcripts - full intelligence: sentiment analysis, trend discovery, semantic search, media assets, creator analytics, and image-backed visual search.
 
 **No API key required to start.** Every tool has a three-tier fallback chain (YouTube API → yt-dlp → page extraction) so nothing breaks when quota runs out or keys aren't configured.
+
+---
+
+## 🎯 Core Capabilities
+
+### 🔎 Semantic Search Across Playlists
+Import entire playlists or video sets, index every transcript with Gemini embeddings, and search across hundreds of hours of content by meaning — not just keywords.
+
+> *"Find every mention of gradient descent across 50 Stanford CS lectures"*
+>
+> *"What did the instructor say about backpropagation in any of these videos?"*
+
+### 👁️ Visual Search — See What's In Videos
+Extract keyframes, describe them with Gemini Vision, run OCR on slides and whiteboards, and search by what you **see** — not just what's said. Three layers: Apple Vision feature prints for image similarity, Gemini frame descriptions for scene understanding, and semantic embeddings for text→visual search.
+
+> *"Find the frame where he draws the system architecture diagram"*
+>
+> *"Show me every slide that mentions 'transformer architecture'"*
+
+### 📊 Intelligence Layer — Not Just Data
+Sentiment analysis with themes and risk signals. Niche trend discovery with momentum and saturation scoring. Content gap detection. Hook pattern analysis. Upload timing recommendations. The LLM does the thinking — VidLens gives it the right data.
+
+> *"What's the audience sentiment on this video? Any risk signals?"*
+>
+> *"What's trending in the AI coding niche right now?"*
+
+### ⚡ Zero Config, Always Works
+No API key needed to start. Three-tier fallback chain on every tool: YouTube API → yt-dlp → page extraction. Nothing breaks when quota runs out. Keys are optional power-ups, not requirements.
+
+### 🎬 Full Media Pipeline
+Download videos/audio/thumbnails. Extract keyframes. Index comments for semantic search. Build a local knowledge base from any YouTube content — all through natural language.
 
 ---
 
@@ -71,15 +102,17 @@ Fully quit and reopen Claude Desktop (or your client). VidLens will appear in th
 
 ### 4. Try it
 
-> "Get the transcript of this video: https://youtube.com/watch?v=dQw4w9WgXcQ"
+> "Import this playlist and search across all videos for mentions of machine learning"
 >
-> "Import this playlist and search for mentions of machine learning"
->
-> "What's the audience sentiment on this video?"
+> "Search this video's visuals for the whiteboard architecture diagram and show me the frame evidence"
 >
 > "What's trending in the AI coding niche right now?"
 >
-> "Search this video's visuals for the whiteboard architecture diagram and show me the frame evidence"
+> "Build a complete dossier for this video — metadata, transcript, sentiment, hooks, everything"
+>
+> "What's the audience sentiment on this video? Any risk signals?"
+>
+> "Get the transcript of this video: https://youtube.com/watch?v=dQw4w9WgXcQ"
 
 ---
 
