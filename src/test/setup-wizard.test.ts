@@ -397,7 +397,7 @@ describe("setup command via runCli", () => {
 
     assert.equal(exitCode, 0);
     const output = stdout.join("");
-    assert.ok(output.includes("Claude Desktop:"), "should include Claude Desktop section");
+    assert.ok(output.includes("Claude Desktop"), "should include Claude Desktop section");
   });
 
   it("setup with --client=claude_desktop targets only Claude Desktop", async () => {
@@ -439,7 +439,7 @@ describe("setup command via runCli", () => {
 
     assert.equal(exitCode, 0);
     const output = stdout.join("");
-    assert.ok(output.includes("Claude Desktop:"), "should include Claude Desktop section");
+    assert.ok(output.includes("Claude Desktop"), "should include Claude Desktop section");
   });
 
   it("setup with --print-only does not write files", async () => {

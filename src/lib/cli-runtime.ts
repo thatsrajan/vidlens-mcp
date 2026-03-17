@@ -9,7 +9,6 @@ import {
   keyTransparencySummary,
   readPackageMetadata,
   resolveDefaultDataDir,
-  resolveChatGptDesktopSupportPaths,
   type ClientDetectionSummary,
   type KnownClientId,
 } from "./install-diagnostics.js";
@@ -89,23 +88,31 @@ export async function runCli(args: string[], deps: Partial<CliDeps> = {}): Promi
       resolvedDeps.writeStdout(await renderDoctorReport(parsed, resolvedDeps));
       return 0;
     case "setup": {
+      const ver = resolvedDeps.packageMeta.version;
+      resolvedDeps.writeStderr(`
+  \x1b[31m██████\x1b[0m
+  \x1b[31m█\x1b[37;1m ▶▶ \x1b[0;31m█\x1b[0m   \x1b[1mVidLens MCP\x1b[0m v${ver}
+  \x1b[31m██████\x1b[0m   YouTube intelligence layer for AI agents
+  \x1b[36m  ████\x1b[0m   41 tools · zero config
+  \x1b[36m    ██\x1b[0m
+`);
       const hasYoutubeKey = Boolean(parsed.youtubeApiKey || resolvedDeps.env.YOUTUBE_API_KEY);
       const hasGeminiKey = Boolean(parsed.geminiApiKey || resolvedDeps.env.GEMINI_API_KEY || parsed.googleApiKey || resolvedDeps.env.GOOGLE_API_KEY);
       if (!hasYoutubeKey || !hasGeminiKey) {
-        resolvedDeps.writeStderr("\n  API keys are optional — everything works without them.\n\n");
+        resolvedDeps.writeStderr("  API keys are optional — everything works without them.\n\n");
       }
       if (!hasYoutubeKey) {
-        resolvedDeps.writeStderr("  YOUTUBE_API_KEY\n");
+        resolvedDeps.writeStderr("  \x1b[33mYOUTUBE_API_KEY\x1b[0m\n");
         resolvedDeps.writeStderr("    Unlocks: higher-fidelity metadata, search via API, subscriber counts\n");
-        resolvedDeps.writeStderr("    Get one free: https://console.cloud.google.com/apis/credentials\n");
+        resolvedDeps.writeStderr("    Get one free: \x1b[4mhttps://console.cloud.google.com/apis/credentials\x1b[0m\n");
         const key = await resolvedDeps.promptLine("    Enter key (or press Enter to skip): ");
         if (key) parsed.youtubeApiKey = key;
         resolvedDeps.writeStderr("\n");
       }
       if (!hasGeminiKey) {
-        resolvedDeps.writeStderr("  GEMINI_API_KEY\n");
+        resolvedDeps.writeStderr("  \x1b[33mGEMINI_API_KEY\x1b[0m\n");
         resolvedDeps.writeStderr("    Unlocks: semantic search, visual search, AI-powered descriptions\n");
-        resolvedDeps.writeStderr("    Get one free: https://aistudio.google.com/apikey\n");
+        resolvedDeps.writeStderr("    Get one free: \x1b[4mhttps://aistudio.google.com/apikey\x1b[0m\n");
         const key = await resolvedDeps.promptLine("    Enter key (or press Enter to skip): ");
         if (key) parsed.geminiApiKey = key;
         resolvedDeps.writeStderr("\n");
@@ -426,11 +433,6 @@ async function renderDoctorReport(parsed: ParsedCliArgs, deps: CliDeps): Promise
       : "";
     lines.push(`- Claude Desktop command: ${command}${args ? ` ${args}` : ""}`);
   }
-  const chatgptDesktop = clients.find((client) => client.clientId === "chatgpt_desktop");
-  if (chatgptDesktop) {
-    lines.push(`- ChatGPT Desktop detected: ${yesNo(chatgptDesktop.detected)}`);
-    lines.push(`- ChatGPT Desktop support: manual copy path only tonight`);
-  }
   lines.push("");
   lines.push("Key presence:");
   lines.push(`- Shell YOUTUBE_API_KEY: ${shellKeyState.youtube}`);
@@ -467,34 +469,18 @@ function renderSetupReport(parsed: ParsedCliArgs, deps: CliDeps): string {
   const lines: string[] = [];
   const errors: string[] = [];
 
-  lines.push(`${deps.packageMeta.name} setup (v${deps.packageMeta.version})`);
-  lines.push("");
-  lines.push(`CLI path: ${deps.cliPath}`);
-  lines.push(`Node path: ${deps.nodePath}`);
-  lines.push(`Data dir: ${dataDir}`);
-  lines.push(`Mode: ${parsed.printOnly ? "print-only" : "write config"}`);
-  lines.push("");
-  lines.push("Key transparency:");
-  for (const item of keyTransparencySummary()) {
-    lines.push(`- ${item.key}`);
-    lines.push(`  unlocks: ${item.unlocks}`);
-    lines.push(`  works without it: ${item.notRequiredFor}`);
-  }
-  lines.push("");
-
   const claudeDesktop = clients.find((client) => client.clientId === "claude_desktop");
   const shouldHandleClaudeDesktop = targetClients.includes("claude_desktop");
   if (shouldHandleClaudeDesktop) {
-    lines.push("Claude Desktop:");
     if (!claudeDesktop?.configPath) {
       errors.push("Claude Desktop config path could not be resolved.");
-      lines.push("- Could not resolve a config path for Claude Desktop on this machine.");
+      lines.push("  \x1b[31m✗\x1b[0m Claude Desktop — config path not found");
     } else {
       const inspection = inspectMcpConfigPath(claudeDesktop.configPath);
       if (inspection.status === "invalid_json") {
         errors.push(`Claude Desktop config is invalid JSON (${claudeDesktop.configPath}).`);
-        lines.push(`- Refused to overwrite invalid JSON: ${claudeDesktop.configPath}`);
-        lines.push(`- Error: ${inspection.error ?? "Unknown JSON parse error."}`);
+        lines.push(`  \x1b[31m✗\x1b[0m Claude Desktop — invalid JSON in config`);
+        lines.push(`    ${inspection.error ?? "Unknown JSON parse error."}`);
       } else {
         const entry = buildServerEntry({
           nodePath: deps.nodePath,
@@ -513,62 +499,23 @@ function renderSetupReport(parsed: ParsedCliArgs, deps: CliDeps): string {
           printOnly: parsed.printOnly,
           now: deps.now(),
         });
-        lines.push(`- Target config: ${result.path}`);
-        lines.push(`- Status: ${describeSetupResult(result, inspection.status === "registered")}`);
-        if (result.backupPath) {
-          lines.push(`- Backup: ${result.backupPath}`);
-        }
-        lines.push(`- Server name: vidlens-mcp`);
-        lines.push("- Generated MCP entry:");
-        lines.push(indent(JSON.stringify(redactEntryForDisplay(entry), null, 2), "  "));
+        lines.push(`  \x1b[32m✓\x1b[0m Claude Desktop ${parsed.printOnly ? "(dry run)" : "configured"}`);
+        const ytKey = entry.env?.YOUTUBE_API_KEY ? "\x1b[32m✓\x1b[0m" : "\x1b[90m-\x1b[0m";
+        const gemKey = entry.env?.GEMINI_API_KEY || entry.env?.GOOGLE_API_KEY ? "\x1b[32m✓\x1b[0m" : "\x1b[90m-\x1b[0m";
+        lines.push(`    Keys: YOUTUBE_API_KEY ${ytKey}  GEMINI_API_KEY ${gemKey}`);
         if (!parsed.printOnly) {
-          lines.push("- Next: fully quit and reopen Claude Desktop.");
+          lines.push("");
+          lines.push("  \x1b[1mNext:\x1b[0m fully quit and reopen Claude Desktop.");
         }
       }
     }
     lines.push("");
   }
 
-  const shouldDescribeChatGpt = targetClients.includes("chatgpt_desktop")
-    || (parsed.clientIds.length === 0 && clients.some((client) => client.clientId === "chatgpt_desktop" && client.detected));
-  if (shouldDescribeChatGpt) {
-    const chatgptClient = clients.find((client) => client.clientId === "chatgpt_desktop");
-    const entry = buildServerEntry({
-      nodePath: deps.nodePath,
-      cliPath: deps.cliPath,
-      dataDir,
-      youtubeApiKey: parsed.youtubeApiKey ?? deps.env.YOUTUBE_API_KEY,
-      geminiApiKey: parsed.geminiApiKey ?? deps.env.GEMINI_API_KEY,
-      googleApiKey: parsed.googleApiKey ?? deps.env.GOOGLE_API_KEY,
-      useNpx: deps.isNpx,
-      packageName: deps.packageMeta.name,
-    });
-    lines.push("ChatGPT Desktop / Ultra:");
-    lines.push(`- Detected: ${yesNo(Boolean(chatgptClient?.detected))}`);
-    lines.push("- Automation status: manual copy only tonight. The app's MCP storage path/schema is still shifting, so setup will not mutate it blindly.");
-    const supportPaths = resolveChatGptDesktopSupportPaths(deps.homeDir, deps.platform, deps.env);
-    lines.push(`- Support path candidates: ${supportPaths.join(", ")}`);
-    lines.push("- Use this generated server entry in the ChatGPT Desktop MCP UI/JSON if available:");
-    lines.push(indent(JSON.stringify({ name: "vidlens-mcp", ...redactEntryForDisplay(entry) }, null, 2), "  "));
-    lines.push("");
-  }
-
-  if (targetClients.some((clientId) => clientId === "claude_code" || clientId === "cursor" || clientId === "vscode" || clientId === "codex")) {
-    lines.push("Other clients:");
-    lines.push("- Claude Code / Cursor / VS Code / Codex are detection targets tonight, but this setup pass does not auto-write their config surfaces.");
-    lines.push("- Focus tonight is a clean macOS desktop path: Claude Desktop automation plus a truthful ChatGPT manual block.");
-    lines.push("");
-  }
-
   if (errors.length > 0) {
-    lines.push("Setup blockers:");
-    for (const error of errors) {
-      lines.push(`- ${error}`);
-    }
+    lines.push("  Run with --print-only to see the generated config without writing files.");
+    lines.push("  Fix any config issues, then rerun: npx vidlens-mcp setup");
     lines.push("");
-    lines.push("Fallback:");
-    lines.push("- Run with --print-only to generate the exact MCP entry without touching config files.");
-    lines.push("- Fix the broken JSON file, then rerun setup.");
   }
 
   return `${lines.join("\n")}\n`;
@@ -582,10 +529,10 @@ Usage:
   vidlens-mcp serve           Start the MCP server over stdio
   vidlens-mcp version         Print package version
   vidlens-mcp doctor          Run setup/health diagnostics
-  vidlens-mcp setup           Configure Claude Desktop and print ChatGPT manual entry
+  vidlens-mcp setup           Configure Claude Desktop
 
 Common flags:
-  --client <id>              Target client (claude_desktop, chatgpt_desktop, claude_code, cursor, vscode, codex)
+  --client <id>              Target client (claude_desktop, claude_code, cursor, vscode, codex)
   --data-dir <path>          Override VIDLENS_DATA_DIR for generated config
   --youtube-api-key <key>    Persist YOUTUBE_API_KEY into generated client config
   --gemini-api-key <key>     Persist GEMINI_API_KEY into generated client config

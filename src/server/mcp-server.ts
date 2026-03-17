@@ -290,7 +290,7 @@ export const tools: Tool[] = [
   },
   {
     name: "checkImportReadiness",
-    description: "Diagnose whether a video is importable tonight, including transcript availability, sparse-transcript warnings, and yt-dlp/API issues.",
+    description: "Diagnose whether a video is importable, including transcript availability, sparse-transcript warnings, and yt-dlp/API issues.",
     inputSchema: {
       type: "object",
       properties: {
@@ -321,7 +321,7 @@ export const tools: Tool[] = [
   },
   {
     name: "checkSystemHealth",
-    description: "Check setup and provider health for Claude Desktop tonight: yt-dlp, YouTube API, Gemini embeddings, and local storage.",
+    description: "Check setup and provider health: yt-dlp, YouTube API, Gemini embeddings, and local storage.",
     inputSchema: {
       type: "object",
       properties: {

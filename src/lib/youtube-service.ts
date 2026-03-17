@@ -541,6 +541,7 @@ export class YouTubeService {
 
     const items: AnalyzeVideoSetItem[] = [];
 
+    const validInputs: Array<{ raw: string; parsed: string }> = [];
     for (const raw of input.videoIdsOrUrls.slice(0, 20)) {
       const parsed = parseVideoId(raw);
       if (!parsed) {
@@ -550,14 +551,24 @@ export class YouTubeService {
           errors: [this.invalidInputDetail(`Invalid YouTube video reference: ${raw}`)],
           provenance: this.makeProvenance("none", true, ["Input could not be parsed as a YouTube video ID or URL."]),
         });
-        continue;
+      } else {
+        validInputs.push({ raw, parsed });
       }
+    }
 
-      const item = await this.analyzeSingleVideo(parsed, input.analyses, {
-        commentsSampleSize: input.commentsSampleSize ?? 50,
-        transcriptMode: input.transcriptMode ?? "key_moments",
-      }, options);
-      items.push(item);
+    const results = await Promise.allSettled(
+      validInputs.map(({ parsed }) =>
+        this.analyzeSingleVideo(parsed, input.analyses, {
+          commentsSampleSize: input.commentsSampleSize ?? 50,
+          transcriptMode: input.transcriptMode ?? "key_moments",
+        }, options),
+      ),
+    );
+
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        items.push(result.value);
+      }
     }
 
     const processedCount = items.filter((item) => Object.keys(item.analyses).length > 0).length;
@@ -1015,51 +1026,34 @@ export class YouTubeService {
     const includeTranscriptSummary = input.includeTranscriptSummary ?? true;
     const commentSampleSize = clamp(input.commentSampleSize ?? 8, 1, 50);
 
-    const video = await this.inspectVideo({
-      videoIdOrUrl: input.videoIdOrUrl,
-      includeTranscriptMeta: true,
-      includeEngagementRatios: true,
-    }, options);
-    const readiness = await this.checkImportReadiness({
-      videoIdOrUrl: input.videoIdOrUrl,
-    }, options);
+    const [video, readiness] = await Promise.all([
+      this.inspectVideo({
+        videoIdOrUrl: input.videoIdOrUrl,
+        includeTranscriptMeta: true,
+        includeEngagementRatios: true,
+      }, options),
+      this.checkImportReadiness({
+        videoIdOrUrl: input.videoIdOrUrl,
+      }, options),
+    ]);
 
-    let transcriptSummary: string | undefined;
-    if (includeTranscriptSummary && readiness.importReadiness.canImport) {
-      try {
-        const transcript = await this.readTranscript({
-          videoIdOrUrl: input.videoIdOrUrl,
-          mode: "summary",
-        }, options);
-        transcriptSummary = transcript.transcript.text;
-      } catch {
-        transcriptSummary = undefined;
-      }
-    }
+    const parallelOps = await Promise.allSettled([
+      includeTranscriptSummary && readiness.importReadiness.canImport
+        ? this.readTranscript({ videoIdOrUrl: input.videoIdOrUrl, mode: "summary" }, options)
+        : Promise.resolve(undefined),
+      includeComments
+        ? this.readComments({ videoIdOrUrl: input.videoIdOrUrl, maxTopLevel: commentSampleSize }, options)
+        : Promise.resolve(undefined),
+      includeSentiment
+        ? this.measureAudienceSentiment({ videoIdOrUrl: input.videoIdOrUrl, sampleSize: commentSampleSize }, options)
+        : Promise.resolve(undefined),
+    ]);
 
-    let comments: ReadCommentsOutput | undefined;
-    if (includeComments) {
-      try {
-        comments = await this.readComments({
-          videoIdOrUrl: input.videoIdOrUrl,
-          maxTopLevel: commentSampleSize,
-        }, options);
-      } catch {
-        comments = undefined;
-      }
-    }
-
-    let sentiment: MeasureAudienceSentimentOutput | undefined;
-    if (includeSentiment) {
-      try {
-        sentiment = await this.measureAudienceSentiment({
-          videoIdOrUrl: input.videoIdOrUrl,
-          sampleSize: commentSampleSize,
-        }, options);
-      } catch {
-        sentiment = undefined;
-      }
-    }
+    const transcriptSummary = parallelOps[0].status === "fulfilled" && parallelOps[0].value
+      ? (parallelOps[0].value as ReadTranscriptOutput).transcript.text
+      : undefined;
+    const comments = parallelOps[1].status === "fulfilled" ? parallelOps[1].value as ReadCommentsOutput | undefined : undefined;
+    const sentiment = parallelOps[2].status === "fulfilled" ? parallelOps[2].value as MeasureAudienceSentimentOutput | undefined : undefined;
 
     return {
       video: video.video,
@@ -1212,7 +1206,7 @@ export class YouTubeService {
 
     const supportedClientDetected = clients.some((client) => client.supportLevel === "supported" && client.detected);
     if (!supportedClientDetected) {
-      suggestions.push("No supported MCP client was detected automatically. Claude Desktop and Claude Code are the best-supported install targets tonight.");
+      suggestions.push("No supported MCP client was detected automatically. Claude Desktop and Claude Code are the best-supported install targets.");
     }
 
     const overallStatus = checks.some((check) => check.status === "error")
@@ -1983,28 +1977,28 @@ export class YouTubeService {
 
     const limitations: string[] = [];
 
-    // Phase 1: search for recent videos in the niche (by date)
-    const recentSearch = await this.findVideos(
-      {
-        query: niche,
-        maxResults,
-        order: "date",
-        regionCode: input.regionCode,
-        publishedAfter: new Date(Date.now() - lookbackDays * 86_400_000).toISOString(),
-      },
-      options,
-    );
-
-    // Phase 2: search for top-performing videos (by viewCount)
-    const topSearch = await this.findVideos(
-      {
-        query: niche,
-        maxResults: Math.min(maxResults, 15),
-        order: "viewCount",
-        regionCode: input.regionCode,
-      },
-      options,
-    );
+    // Phase 1 & 2: search for recent and top-performing videos in parallel
+    const [recentSearch, topSearch] = await Promise.all([
+      this.findVideos(
+        {
+          query: niche,
+          maxResults,
+          order: "date",
+          regionCode: input.regionCode,
+          publishedAfter: new Date(Date.now() - lookbackDays * 86_400_000).toISOString(),
+        },
+        options,
+      ),
+      this.findVideos(
+        {
+          query: niche,
+          maxResults: Math.min(maxResults, 15),
+          order: "viewCount",
+          regionCode: input.regionCode,
+        },
+        options,
+      ),
+    ]);
 
     // Merge and deduplicate
     const seen = new Set<string>();
@@ -2019,16 +2013,20 @@ export class YouTubeService {
     const enriched: TrendingVideo[] = [];
     const provenances: Provenance[] = [recentSearch.provenance, topSearch.provenance];
 
-    for (const item of deduped.slice(0, maxResults)) {
-      let video: InspectVideoOutput | undefined;
-      try {
-        video = await this.inspectVideo(
-          { videoIdOrUrl: item.videoId },
-          options,
-        );
+    const sliced = deduped.slice(0, maxResults);
+    const inspectResults = await Promise.allSettled(
+      sliced.map((item) =>
+        this.inspectVideo({ videoIdOrUrl: item.videoId }, options),
+      ),
+    );
+
+    for (let i = 0; i < sliced.length; i++) {
+      const item = sliced[i];
+      const inspectResult = inspectResults[i];
+      const video: InspectVideoOutput | undefined =
+        inspectResult.status === "fulfilled" ? inspectResult.value : undefined;
+      if (video) {
         provenances.push(video.provenance);
-      } catch {
-        // Fall back to search-only data
       }
 
       enriched.push({
@@ -2735,8 +2733,8 @@ export class YouTubeService {
       handle,
       createdAt: "2010-01-01T00:00:00.000Z",
       country: "US",
-      description: "Dry-run channel description for tonight's demo build.",
-      descriptionSummary: "Dry-run channel description for tonight's demo build.",
+      description: "Dry-run channel description for demo purposes.",
+      descriptionSummary: "Dry-run channel description for demo purposes.",
       subscribers: 1200000,
       totalViews: 56000000,
       totalVideos: 540,

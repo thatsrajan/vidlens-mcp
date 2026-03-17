@@ -107,7 +107,7 @@ export function detectKnownClients(options: DetectClientsOptions = {}): ClientDe
       installSurface: "config_file",
       configPath: cursorUserConfig,
       notes: [
-        "Detection scaffolding only tonight — auto-config is not implemented.",
+        "Detection only — auto-config is not yet implemented.",
         pathExists(cursorUserConfig)
           ? "Cursor user config path exists."
           : "Cursor user config path not detected.",
@@ -121,7 +121,7 @@ export function detectKnownClients(options: DetectClientsOptions = {}): ClientDe
       installSurface: "config_file",
       configPath: vscodeUserConfig,
       notes: [
-        "Detection scaffolding only tonight — auto-config is not implemented.",
+        "Detection only — auto-config is not yet implemented.",
         pathExists(vscodeUserConfig)
           ? "VS Code user config path exists."
           : "VS Code user config path not detected.",
@@ -136,7 +136,7 @@ export function detectKnownClients(options: DetectClientsOptions = {}): ClientDe
       configPath: discoveredChatGptPaths[0] ?? chatgptSupportPaths[0],
       notes: [
         chatgptDesktopDetected
-          ? "ChatGPT Desktop support files were detected, but config schema/path is still evolving and is not auto-managed tonight."
+          ? "ChatGPT Desktop support files were detected, but config auto-management is not yet supported."
           : "ChatGPT Desktop was not detected on the default macOS paths.",
         chatgptDesktopApp && pathExists(chatgptDesktopApp)
           ? `App bundle detected (${basename(chatgptDesktopApp)}).`
@@ -157,7 +157,7 @@ export function detectKnownClients(options: DetectClientsOptions = {}): ClientDe
         codexBinary
           ? `CLI detected on PATH (${codexBinary}).`
           : "CLI not detected on PATH.",
-        "Codex config/install flow is documented as a target, but not auto-configured tonight.",
+        "Codex config/install flow is documented as a target, but not yet auto-configured.",
       ],
     },
   ];
