@@ -4,10 +4,12 @@ import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startStdioServer } from "../server/mcp-server.js";
+import { printBanner } from "./banner.js";
 import {
   detectKnownClients,
   keyTransparencySummary,
   readPackageMetadata,
+  resolveClaudeCodeUserConfigPath,
   resolveDefaultDataDir,
   type ClientDetectionSummary,
   type KnownClientId,
@@ -79,6 +81,7 @@ export async function runCli(args: string[], deps: Partial<CliDeps> = {}): Promi
 
   switch (parsed.command) {
     case "serve":
+      printBanner();
       await resolvedDeps.startServer();
       return 0;
     case "version":
@@ -403,11 +406,16 @@ async function renderDoctorReport(parsed: ParsedCliArgs, deps: CliDeps): Promise
   const clients = deps.detectClients();
   const claudeDesktop = clients.find((client) => client.clientId === "claude_desktop");
   const claudeInspection = inspectMcpConfigPath(claudeDesktop?.configPath);
+  const claudeCode = clients.find((client) => client.clientId === "claude_code");
+  const claudeCodeConfigPath = resolveClaudeCodeUserConfigPath(deps.homeDir);
+  const claudeCodeInspection = inspectMcpConfigPath(claudeCodeConfigPath);
   const shellKeyState = buildShellKeyState(deps.env);
-  const configKeyState = buildConfigKeyState(claudeInspection.envKeys);
+  const configKeyState = buildConfigKeyState(claudeInspection.envKeys, "Claude Desktop");
+  const codeConfigKeyState = buildConfigKeyState(claudeCodeInspection.envKeys, "Claude Code");
   const suggestions = dedupeStrings([
     ...health.suggestions,
-    ...doctorSetupSuggestions(claudeDesktop, claudeInspection),
+    ...doctorSetupSuggestions(claudeDesktop, claudeInspection, "Claude Desktop"),
+    ...doctorSetupSuggestions(claudeCode, claudeCodeInspection, "Claude Code"),
   ]);
 
   const lines: string[] = [];
@@ -436,12 +444,26 @@ async function renderDoctorReport(parsed: ParsedCliArgs, deps: CliDeps): Promise
       : "";
     lines.push(`- Claude Desktop command: ${command}${args ? ` ${args}` : ""}`);
   }
+  lines.push(`- Claude Code detected: ${yesNo(Boolean(claudeCode?.detected))}`);
+  lines.push(`- Claude Code config path: ${claudeCodeConfigPath}`);
+  lines.push(`- vidlens-mcp in Claude Code config: ${describeInspectionStatus(claudeCodeInspection)}`);
+  if (claudeCodeInspection.status === "registered") {
+    const command = typeof claudeCodeInspection.serverEntry?.command === "string"
+      ? claudeCodeInspection.serverEntry.command
+      : "unknown";
+    const args = Array.isArray(claudeCodeInspection.serverEntry?.args)
+      ? (claudeCodeInspection.serverEntry.args as unknown[]).map(String).join(" ")
+      : "";
+    lines.push(`- Claude Code command: ${command}${args ? ` ${args}` : ""}`);
+  }
   lines.push("");
   lines.push("Key presence:");
   lines.push(`- Shell YOUTUBE_API_KEY: ${shellKeyState.youtube}`);
   lines.push(`- Claude Desktop YOUTUBE_API_KEY: ${configKeyState.youtube}`);
+  lines.push(`- Claude Code YOUTUBE_API_KEY: ${codeConfigKeyState.youtube}`);
   lines.push(`- Shell GEMINI_API_KEY / GOOGLE_API_KEY: ${shellKeyState.gemini}`);
   lines.push(`- Claude Desktop GEMINI_API_KEY / GOOGLE_API_KEY: ${configKeyState.gemini}`);
+  lines.push(`- Claude Code GEMINI_API_KEY / GOOGLE_API_KEY: ${codeConfigKeyState.gemini}`);
   lines.push("");
   lines.push("Key transparency:");
   for (const item of keyTransparencySummary()) {
@@ -467,7 +489,14 @@ async function renderDoctorReport(parsed: ParsedCliArgs, deps: CliDeps): Promise
 
 function renderSetupReport(parsed: ParsedCliArgs, deps: CliDeps): string {
   const clients = deps.detectClients();
-  const targetClients = parsed.clientIds.length > 0 ? dedupeClientIds(parsed.clientIds) : ["claude_desktop"];
+  const autoDetected = dedupeClientIds(
+    clients
+      .filter((c) => c.detected && c.supportLevel === "supported")
+      .map((c) => c.clientId),
+  );
+  const targetClients = parsed.clientIds.length > 0
+    ? dedupeClientIds(parsed.clientIds)
+    : autoDetected.length > 0 ? autoDetected : ["claude_desktop" as KnownClientId];
   const dataDir = parsed.dataDir ?? deps.env.VIDLENS_DATA_DIR ?? resolveDefaultDataDir(deps.homeDir, deps.platform);
   const lines: string[] = [];
   const errors: string[] = [];
@@ -515,6 +544,45 @@ function renderSetupReport(parsed: ParsedCliArgs, deps: CliDeps): string {
     lines.push("");
   }
 
+  const shouldHandleClaudeCode = targetClients.includes("claude_code");
+  if (shouldHandleClaudeCode) {
+    const claudeCodeConfigPath = resolveClaudeCodeUserConfigPath(deps.homeDir);
+    const inspection = inspectMcpConfigPath(claudeCodeConfigPath);
+    if (inspection.status === "invalid_json") {
+      errors.push(`Claude Code config is invalid JSON (${claudeCodeConfigPath}).`);
+      lines.push(`  \x1b[31m✗\x1b[0m Claude Code — invalid JSON in config`);
+      lines.push(`    ${inspection.error ?? "Unknown JSON parse error."}`);
+    } else {
+      const entry = buildServerEntry({
+        nodePath: deps.nodePath,
+        cliPath: deps.cliPath,
+        dataDir,
+        youtubeApiKey: parsed.youtubeApiKey ?? deps.env.YOUTUBE_API_KEY,
+        geminiApiKey: parsed.geminiApiKey ?? deps.env.GEMINI_API_KEY,
+        googleApiKey: parsed.googleApiKey ?? deps.env.GOOGLE_API_KEY,
+        existingEntry: inspection.serverEntry,
+        useNpx: deps.isNpx,
+        packageName: deps.packageMeta.name,
+      });
+      const result = upsertMcpServerConfig({
+        configPath: claudeCodeConfigPath,
+        entry,
+        printOnly: parsed.printOnly,
+        now: deps.now(),
+      });
+      lines.push(`  \x1b[32m✓\x1b[0m Claude Code ${parsed.printOnly ? "(dry run)" : "configured"}`);
+      const ytKey = entry.env?.YOUTUBE_API_KEY ? "\x1b[32m✓\x1b[0m" : "\x1b[90m-\x1b[0m";
+      const gemKey = entry.env?.GEMINI_API_KEY || entry.env?.GOOGLE_API_KEY ? "\x1b[32m✓\x1b[0m" : "\x1b[90m-\x1b[0m";
+      lines.push(`    Keys: YOUTUBE_API_KEY ${ytKey}  GEMINI_API_KEY ${gemKey}`);
+      lines.push(`    Config: ${claudeCodeConfigPath}`);
+      if (!parsed.printOnly) {
+        lines.push("");
+        lines.push("  \x1b[1mNext:\x1b[0m Claude Code picks up changes automatically.");
+      }
+    }
+    lines.push("");
+  }
+
   if (errors.length > 0) {
     lines.push("  Run with --print-only to see the generated config without writing files.");
     lines.push("  Fix any config issues, then rerun: npx vidlens-mcp setup");
@@ -532,7 +600,7 @@ Usage:
   vidlens-mcp serve           Start the MCP server over stdio
   vidlens-mcp version         Print package version
   vidlens-mcp doctor          Run setup/health diagnostics
-  vidlens-mcp setup           Configure Claude Desktop
+  vidlens-mcp setup           Configure detected MCP clients (Claude Desktop, Claude Code)
 
 Common flags:
   --client <id>              Target client (claude_desktop, claude_code, cursor, vscode, codex)
@@ -555,30 +623,31 @@ function buildShellKeyState(env: NodeJS.ProcessEnv): { youtube: string; gemini: 
   };
 }
 
-function buildConfigKeyState(envKeys: string[]): { youtube: string; gemini: string } {
+function buildConfigKeyState(envKeys: string[], clientLabel = "Claude Desktop"): { youtube: string; gemini: string } {
   return {
-    youtube: envKeys.includes("YOUTUBE_API_KEY") ? "present in Claude Desktop config" : "not present in Claude Desktop config",
+    youtube: envKeys.includes("YOUTUBE_API_KEY") ? `present in ${clientLabel} config` : `not present in ${clientLabel} config`,
     gemini: envKeys.includes("GEMINI_API_KEY") || envKeys.includes("GOOGLE_API_KEY")
-      ? "present in Claude Desktop config"
-      : "not present in Claude Desktop config",
+      ? `present in ${clientLabel} config`
+      : `not present in ${clientLabel} config`,
   };
 }
 
 function doctorSetupSuggestions(
-  claudeDesktop: ClientDetectionSummary | undefined,
+  client: ClientDetectionSummary | undefined,
   inspection: McpConfigInspection,
+  clientLabel = "Claude Desktop",
 ): string[] {
   const suggestions: string[] = [];
-  if (claudeDesktop?.configPath && inspection.status === "not_found") {
-    suggestions.push(`Run setup to create ${claudeDesktop.configPath} and register vidlens-mcp for Claude Desktop.`);
+  if (client?.configPath && inspection.status === "not_found") {
+    suggestions.push(`Run setup to create ${inspection.path ?? client.configPath} and register vidlens-mcp for ${clientLabel}.`);
   }
   if (inspection.status === "missing") {
-    suggestions.push("Run setup to add vidlens-mcp to Claude Desktop without disturbing other MCP servers.");
+    suggestions.push(`Run setup to add vidlens-mcp to ${clientLabel} without disturbing other MCP servers.`);
   }
   if (inspection.status === "invalid_json") {
-    suggestions.push(`Fix the invalid Claude Desktop config JSON at ${claudeDesktop?.configPath ?? "the detected config path"}, then rerun setup.`);
+    suggestions.push(`Fix the invalid ${clientLabel} config JSON at ${inspection.path ?? client?.configPath ?? "the detected config path"}, then rerun setup.`);
   }
-  if (inspection.status === "registered") {
+  if (inspection.status === "registered" && clientLabel === "Claude Desktop") {
     suggestions.push("Restart Claude Desktop after any setup changes so the updated MCP server registration is reloaded.");
   }
   return suggestions;
