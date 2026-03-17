@@ -321,7 +321,7 @@ One directory. Portable. Back it up by copying. Delete it to start fresh.
 
 | Requirement | Status | Notes |
 |---|---|---|
-| **Node.js ≥ 20** | Required | `node --version` to check |
+| **Node.js ≥ 22** | Required | Uses `node:sqlite` — `node --version` to check |
 | **yt-dlp** | Recommended | `brew install yt-dlp` - enables zero-config mode |
 | **ffmpeg** | Optional | Needed for frame extraction and visual indexing |
 | **YouTube API key** | Optional | Unlocks comments, better metadata |
