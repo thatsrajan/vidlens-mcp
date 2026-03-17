@@ -82,8 +82,8 @@ export class CacheStore {
     this.db = new DatabaseSync(dbPath);
     this.maxEntries = options.maxEntries ?? 10_000;
 
+    this.db.exec("PRAGMA busy_timeout = 5000");
     this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec("PRAGMA busy_timeout = 3000");
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS cache_entries (
