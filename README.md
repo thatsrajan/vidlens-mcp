@@ -74,11 +74,24 @@ Download videos/audio/thumbnails. Extract keyframes. Index comments for semantic
 npx vidlens-mcp setup
 ```
 
-This auto-detects your MCP client (Claude Desktop, Cursor, etc.) and configures it.
+This auto-detects your MCP clients (Claude Desktop, Claude Code) and configures both.
 
 ### 2. Or configure manually
 
-**Claude Desktop** - add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+**Claude Desktop** — add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "vidlens-mcp": {
+      "command": "npx",
+      "args": ["-y", "vidlens-mcp", "serve"]
+    }
+  }
+}
+```
+
+**Claude Code** — add to `~/.claude/settings.json`:
 
 ```json
 {
@@ -93,7 +106,7 @@ This auto-detects your MCP client (Claude Desktop, Cursor, etc.) and configures 
 
 ### 3. Restart your MCP client
 
-Fully quit and reopen Claude Desktop (or your client). VidLens will appear in the tool list.
+Fully quit and reopen Claude Desktop (⌘Q). Claude Code picks up changes automatically.
 
 ### 4. Try it
 
@@ -245,7 +258,7 @@ export GEMINI_API_KEY=your_gemini_key
 ```bash
 npx vidlens-mcp               # Start MCP server (stdio)
 npx vidlens-mcp serve         # Start MCP server (explicit)
-npx vidlens-mcp setup         # Auto-configure MCP clients
+npx vidlens-mcp setup         # Auto-configure Claude Desktop + Claude Code
 npx vidlens-mcp doctor        # Run diagnostics
 npx vidlens-mcp version       # Print version
 npx vidlens-mcp help          # Usage guide
@@ -257,7 +270,7 @@ npx vidlens-mcp help          # Usage guide
 npx vidlens-mcp doctor --no-live
 ```
 
-Checks: Node.js version, yt-dlp availability, API key validation, data directory health, MCP client detection (Claude Desktop, ChatGPT Desktop, Cursor, VS Code).
+Checks: Node.js version, yt-dlp availability, API key validation, data directory health, MCP client registration (Claude Desktop, Claude Code).
 
 ---
 
