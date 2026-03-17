@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
+import { existsSync } from "node:fs";
 import {
   buildServerEntry,
   inspectMcpConfigPath,
@@ -502,5 +503,153 @@ describe("setup command via runCli", () => {
 
     assert.equal(exitCode, 0);
     assert.equal(stdout.join(""), "vidlens-mcp v1.2.3\n");
+  });
+
+  it("auto-detect selects both Claude Desktop and Claude Code when both detected", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "vidlens-mcp-setup-auto-"));
+    const stdout: string[] = [];
+
+    await runCli(["setup", "--print-only"], {
+      startServer: async () => undefined,
+      createService: () => ({}) as unknown as YouTubeService,
+      packageMeta: { name: "vidlens-mcp", version: "1.0.0" },
+      detectClients: () => [
+        {
+          clientId: "claude_desktop" as const,
+          name: "Claude Desktop",
+          detected: true,
+          supportLevel: "supported" as const,
+          installSurface: "config_file" as const,
+          configPath: join(configDir, "claude.json"),
+        },
+        {
+          clientId: "claude_code" as const,
+          name: "Claude Code",
+          detected: true,
+          supportLevel: "supported" as const,
+          installSurface: "mixed" as const,
+          configPath: join(configDir, ".claude", "settings.json"),
+        },
+      ],
+      writeStdout: (text) => { stdout.push(text); },
+      writeStderr: () => undefined,
+      env: {},
+      platform: "darwin",
+      homeDir: configDir,
+      nodePath: "/usr/local/bin/node",
+      cliPath: "/repo/dist/cli.js",
+      now: () => new Date("2026-03-16T00:00:00.000Z"),
+    });
+
+    const output = stdout.join("");
+    assert.ok(output.includes("Claude Desktop"), "should include Claude Desktop section");
+    assert.ok(output.includes("Claude Code"), "should include Claude Code section");
+  });
+
+  it("--client=claude_code targets only Claude Code", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "vidlens-mcp-setup-cc-"));
+    const stdout: string[] = [];
+
+    await runCli(["setup", "--client=claude_code", "--print-only"], {
+      startServer: async () => undefined,
+      createService: () => ({}) as unknown as YouTubeService,
+      packageMeta: { name: "vidlens-mcp", version: "1.0.0" },
+      detectClients: () => [
+        {
+          clientId: "claude_desktop" as const,
+          name: "Claude Desktop",
+          detected: true,
+          supportLevel: "supported" as const,
+          installSurface: "config_file" as const,
+          configPath: join(configDir, "claude.json"),
+        },
+        {
+          clientId: "claude_code" as const,
+          name: "Claude Code",
+          detected: true,
+          supportLevel: "supported" as const,
+          installSurface: "mixed" as const,
+          configPath: join(configDir, ".claude", "settings.json"),
+        },
+      ],
+      writeStdout: (text) => { stdout.push(text); },
+      writeStderr: () => undefined,
+      env: {},
+      platform: "darwin",
+      homeDir: configDir,
+      nodePath: "/usr/local/bin/node",
+      cliPath: "/repo/dist/cli.js",
+      now: () => new Date("2026-03-16T00:00:00.000Z"),
+    });
+
+    const output = stdout.join("");
+    assert.ok(!output.includes("Claude Desktop"), "should NOT include Claude Desktop section");
+    assert.ok(output.includes("Claude Code"), "should include Claude Code section");
+  });
+
+  it("Claude Code write targets ~/.claude/settings.json", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "vidlens-mcp-setup-ccwrite-"));
+    const stdout: string[] = [];
+
+    await runCli(["setup", "--client=claude_code"], {
+      startServer: async () => undefined,
+      createService: () => ({}) as unknown as YouTubeService,
+      packageMeta: { name: "vidlens-mcp", version: "1.0.0" },
+      detectClients: () => [
+        {
+          clientId: "claude_code" as const,
+          name: "Claude Code",
+          detected: true,
+          supportLevel: "supported" as const,
+          installSurface: "mixed" as const,
+          configPath: join(configDir, ".claude", "settings.json"),
+        },
+      ],
+      writeStdout: (text) => { stdout.push(text); },
+      writeStderr: () => undefined,
+      env: {},
+      platform: "darwin",
+      homeDir: configDir,
+      nodePath: "/usr/local/bin/node",
+      cliPath: "/repo/dist/cli.js",
+      now: () => new Date("2026-03-16T00:00:00.000Z"),
+    });
+
+    const settingsPath = join(configDir, ".claude", "settings.json");
+    assert.ok(existsSync(settingsPath), "settings.json should have been created");
+    const content = JSON.parse(readFileSync(settingsPath, "utf8")) as JsonObject;
+    const servers = content.mcpServers as JsonObject;
+    assert.ok(servers["vidlens-mcp"], "vidlens-mcp should be registered in settings.json");
+  });
+
+  it("--print-only does not write files for Claude Code", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "vidlens-mcp-setup-ccpo-"));
+
+    await runCli(["setup", "--client=claude_code", "--print-only"], {
+      startServer: async () => undefined,
+      createService: () => ({}) as unknown as YouTubeService,
+      packageMeta: { name: "vidlens-mcp", version: "1.0.0" },
+      detectClients: () => [
+        {
+          clientId: "claude_code" as const,
+          name: "Claude Code",
+          detected: true,
+          supportLevel: "supported" as const,
+          installSurface: "mixed" as const,
+          configPath: join(configDir, ".claude", "settings.json"),
+        },
+      ],
+      writeStdout: () => undefined,
+      writeStderr: () => undefined,
+      env: {},
+      platform: "darwin",
+      homeDir: configDir,
+      nodePath: "/usr/local/bin/node",
+      cliPath: "/repo/dist/cli.js",
+      now: () => new Date("2026-03-16T00:00:00.000Z"),
+    });
+
+    const settingsPath = join(configDir, ".claude", "settings.json");
+    assert.ok(!existsSync(settingsPath), "settings.json should NOT be created in print-only mode");
   });
 });

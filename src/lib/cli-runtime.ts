@@ -93,14 +93,9 @@ export async function runCli(args: string[], deps: Partial<CliDeps> = {}): Promi
     case "setup": {
       const ver = resolvedDeps.packageMeta.version;
       resolvedDeps.writeStderr(`
-      \x1b[90m▄▄████████▄▄\x1b[0m
-    \x1b[90m██\x1b[31m██████████████\x1b[90m██\x1b[0m
-   \x1b[90m██\x1b[31m████\x1b[97;1m ▄██▶ \x1b[0;31m█████\x1b[90m██\x1b[0m   \x1b[1mVidLens MCP\x1b[0m v${ver}
-   \x1b[90m██\x1b[31m████\x1b[97;1m ▀██▶ \x1b[0;31m█████\x1b[90m██\x1b[0m   YouTube intelligence layer for AI agents
-    \x1b[90m██\x1b[31m██████████████\x1b[90m██\x1b[0m   41 tools · zero config
-      \x1b[90m▀▀████████▀▀\x1b[0m
-              \x1b[36m▄██\x1b[0m
-                \x1b[36m█\x1b[0m
+  \x1b[31m▶\x1b[0m \x1b[1mVidLens MCP\x1b[0m v${ver}
+    YouTube intelligence layer for AI agents
+    41 tools · zero config
 `);
       const hasYoutubeKey = Boolean(parsed.youtubeApiKey || resolvedDeps.env.YOUTUBE_API_KEY);
       const hasGeminiKey = Boolean(parsed.geminiApiKey || resolvedDeps.env.GEMINI_API_KEY || parsed.googleApiKey || resolvedDeps.env.GOOGLE_API_KEY);

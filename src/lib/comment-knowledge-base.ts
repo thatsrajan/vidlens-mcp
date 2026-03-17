@@ -109,6 +109,7 @@ export class CommentKnowledgeBase {
     mkdirSync(this.dataDir, { recursive: true });
     this.db = new DatabaseSync(join(this.dataDir, "knowledge-base.sqlite"));
     this.db.exec("PRAGMA journal_mode = WAL;");
+    this.db.exec("PRAGMA busy_timeout = 5000;");
     this.db.exec("PRAGMA foreign_keys = ON;");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS comment_collections (

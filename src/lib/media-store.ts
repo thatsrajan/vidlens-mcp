@@ -78,6 +78,7 @@ export class MediaStore {
     const dbPath = join(this.dataDir, "media-manifest.db");
     this.db = new DatabaseSync(dbPath);
     this.db.exec("PRAGMA journal_mode=WAL");
+    this.db.exec("PRAGMA busy_timeout=5000");
     this.db.exec("PRAGMA foreign_keys=ON");
     this.migrate();
   }
