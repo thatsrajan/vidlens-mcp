@@ -1,4 +1,5 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createInterface } from "node:readline";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -62,6 +63,8 @@ export interface CliDeps {
   nodePath: string;
   cliPath: string;
   now: () => Date;
+  isNpx: boolean;
+  promptLine: (question: string) => Promise<string>;
 }
 
 class CliUserError extends Error {
@@ -85,9 +88,31 @@ export async function runCli(args: string[], deps: Partial<CliDeps> = {}): Promi
     case "doctor":
       resolvedDeps.writeStdout(await renderDoctorReport(parsed, resolvedDeps));
       return 0;
-    case "setup":
+    case "setup": {
+      const hasYoutubeKey = Boolean(parsed.youtubeApiKey || resolvedDeps.env.YOUTUBE_API_KEY);
+      const hasGeminiKey = Boolean(parsed.geminiApiKey || resolvedDeps.env.GEMINI_API_KEY || parsed.googleApiKey || resolvedDeps.env.GOOGLE_API_KEY);
+      if (!hasYoutubeKey || !hasGeminiKey) {
+        resolvedDeps.writeStderr("\n  API keys are optional — everything works without them.\n\n");
+      }
+      if (!hasYoutubeKey) {
+        resolvedDeps.writeStderr("  YOUTUBE_API_KEY\n");
+        resolvedDeps.writeStderr("    Unlocks: higher-fidelity metadata, search via API, subscriber counts\n");
+        resolvedDeps.writeStderr("    Get one free: https://console.cloud.google.com/apis/credentials\n");
+        const key = await resolvedDeps.promptLine("    Enter key (or press Enter to skip): ");
+        if (key) parsed.youtubeApiKey = key;
+        resolvedDeps.writeStderr("\n");
+      }
+      if (!hasGeminiKey) {
+        resolvedDeps.writeStderr("  GEMINI_API_KEY\n");
+        resolvedDeps.writeStderr("    Unlocks: semantic search, visual search, AI-powered descriptions\n");
+        resolvedDeps.writeStderr("    Get one free: https://aistudio.google.com/apikey\n");
+        const key = await resolvedDeps.promptLine("    Enter key (or press Enter to skip): ");
+        if (key) parsed.geminiApiKey = key;
+        resolvedDeps.writeStderr("\n");
+      }
       resolvedDeps.writeStdout(renderSetupReport(parsed, resolvedDeps));
       return 0;
+    }
     case "help":
       resolvedDeps.writeStdout(renderHelp(resolvedDeps.packageMeta.name));
       return 0;
@@ -202,6 +227,8 @@ export function buildServerEntry(options: {
   geminiApiKey?: string;
   googleApiKey?: string;
   existingEntry?: JsonObject;
+  useNpx?: boolean;
+  packageName?: string;
 }): McpServerEntry {
   const existingEnv = isRecord(options.existingEntry?.env)
     ? stringifyEnv(options.existingEntry.env)
@@ -219,6 +246,14 @@ export function buildServerEntry(options: {
   }
   if (options.googleApiKey) {
     env.GOOGLE_API_KEY = options.googleApiKey;
+  }
+
+  if (options.useNpx) {
+    return {
+      command: "npx",
+      args: ["-y", options.packageName ?? "vidlens-mcp", "serve"],
+      env,
+    };
   }
 
   return {
@@ -278,15 +313,14 @@ export function mergeMcpConfigText(
   const root = parseConfigRoot(existingText);
   const mcpServers = isRecord(root.mcpServers) ? { ...root.mcpServers } : {};
   const existingEntry = isRecord(mcpServers[serverName]) ? (mcpServers[serverName] as JsonObject) : undefined;
-  const merged = buildServerEntry({
-    nodePath: serverEntry.command,
-    cliPath: serverEntry.args[0] ?? "dist/cli.js",
-    dataDir: serverEntry.env?.VIDLENS_DATA_DIR ?? "",
-    youtubeApiKey: serverEntry.env?.YOUTUBE_API_KEY,
-    geminiApiKey: serverEntry.env?.GEMINI_API_KEY,
-    googleApiKey: serverEntry.env?.GOOGLE_API_KEY,
-    existingEntry,
-  });
+  const existingEnv = existingEntry && isRecord(existingEntry.env)
+    ? stringifyEnv(existingEntry.env)
+    : {};
+  const merged: McpServerEntry = {
+    command: serverEntry.command,
+    args: [...serverEntry.args],
+    env: { ...existingEnv, ...serverEntry.env },
+  };
 
   const nextRoot: JsonObject = {
     ...root,
@@ -333,6 +367,8 @@ export function upsertMcpServerConfig(options: {
 }
 
 function createCliDeps(overrides: Partial<CliDeps>): CliDeps {
+  const env = overrides.env ?? process.env;
+  const cliPath = overrides.cliPath ?? fileURLToPath(new URL("../cli.js", import.meta.url));
   return {
     startServer: overrides.startServer ?? (() => startStdioServer()),
     createService: overrides.createService ?? (() => new YouTubeService()),
@@ -340,12 +376,14 @@ function createCliDeps(overrides: Partial<CliDeps>): CliDeps {
     detectClients: overrides.detectClients ?? (() => detectKnownClients()),
     writeStdout: overrides.writeStdout ?? ((text) => process.stdout.write(text)),
     writeStderr: overrides.writeStderr ?? ((text) => process.stderr.write(text)),
-    env: overrides.env ?? process.env,
+    env,
     platform: overrides.platform ?? process.platform,
     homeDir: overrides.homeDir ?? homedir(),
     nodePath: overrides.nodePath ?? process.execPath,
-    cliPath: overrides.cliPath ?? fileURLToPath(new URL("../cli.js", import.meta.url)),
+    cliPath,
     now: overrides.now ?? (() => new Date()),
+    isNpx: overrides.isNpx ?? isNpxInvocation(env, cliPath),
+    promptLine: overrides.promptLine ?? defaultPromptLine,
   };
 }
 
@@ -466,6 +504,8 @@ function renderSetupReport(parsed: ParsedCliArgs, deps: CliDeps): string {
           geminiApiKey: parsed.geminiApiKey ?? deps.env.GEMINI_API_KEY,
           googleApiKey: parsed.googleApiKey ?? deps.env.GOOGLE_API_KEY,
           existingEntry: inspection.serverEntry,
+          useNpx: deps.isNpx,
+          packageName: deps.packageMeta.name,
         });
         const result = upsertMcpServerConfig({
           configPath: claudeDesktop.configPath,
@@ -500,6 +540,8 @@ function renderSetupReport(parsed: ParsedCliArgs, deps: CliDeps): string {
       youtubeApiKey: parsed.youtubeApiKey ?? deps.env.YOUTUBE_API_KEY,
       geminiApiKey: parsed.geminiApiKey ?? deps.env.GEMINI_API_KEY,
       googleApiKey: parsed.googleApiKey ?? deps.env.GOOGLE_API_KEY,
+      useNpx: deps.isNpx,
+      packageName: deps.packageMeta.name,
     });
     lines.push("ChatGPT Desktop / Ultra:");
     lines.push(`- Detected: ${yesNo(Boolean(chatgptClient?.detected))}`);
@@ -734,6 +776,23 @@ function indent(text: string, prefix: string): string {
     .split("\n")
     .map((line) => `${prefix}${line}`)
     .join("\n");
+}
+
+function isNpxInvocation(env: NodeJS.ProcessEnv, cliPath: string): boolean {
+  if (env.npm_command === "exec") return true;
+  if (cliPath.includes("/_npx/")) return true;
+  return false;
+}
+
+function defaultPromptLine(question: string): Promise<string> {
+  if (!process.stdin.isTTY) return Promise.resolve("");
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
 }
 
 function isRecord(value: unknown): value is JsonObject {
