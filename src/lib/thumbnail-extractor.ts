@@ -6,7 +6,7 @@
  * - Does NOT do visual search, visual embeddings, or frame classification
  * - Provides raw frame files that can be used by external vision models
  */
-import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { execa } from "execa";
 import { MediaStore, type MediaAsset } from "./media-store.js";
@@ -86,29 +86,24 @@ export class ThumbnailExtractor {
     const framesDir = join(this.store.videoDir(options.videoId), "keyframes");
     mkdirSync(framesDir, { recursive: true });
 
-    // Extract all frames in a single ffmpeg call using the select filter
-    const selectExpr = timestamps
-      .map((t) => `eq(n\\,0)*gte(t\\,${t})`)
-      .join("+");
+    // Pre-fetch existing assets once for skip checks (avoids N DB queries)
+    const existingByPath = new Map(
+      this.store.listAssetsForVideo(options.videoId).map((a) => [a.filePath, a]),
+    );
 
-    // Simpler approach: extract at each timestamp individually
-    // This is more reliable than complex filter expressions
-    const assets: MediaAsset[] = [];
+    // Extract frames in parallel with bounded concurrency
+    const CONCURRENCY = 4;
 
-    for (const [index, timestamp] of timestamps.entries()) {
+    const extractFrame = async (index: number, timestamp: number): Promise<MediaAsset | null> => {
       const outFile = join(
         framesDir,
         `${options.videoId}_${String(index).padStart(4, "0")}_${Math.round(timestamp)}s.${imageFormat}`,
       );
 
-      // Skip if already extracted
+      // Skip if already extracted and registered
       if (existsSync(outFile)) {
-        const existing = this.store.listAssetsForVideo(options.videoId)
-          .find((a) => a.filePath === outFile);
-        if (existing) {
-          assets.push(existing);
-          continue;
-        }
+        const existing = existingByPath.get(outFile);
+        if (existing) return existing;
       }
 
       try {
@@ -143,7 +138,7 @@ export class ThumbnailExtractor {
             // non-critical
           }
 
-          const asset = this.store.registerAsset({
+          return this.store.registerAsset({
             videoId: options.videoId,
             kind: "keyframe",
             filePath: outFile,
@@ -151,12 +146,19 @@ export class ThumbnailExtractor {
             width: frameWidth,
             height: frameHeight,
           });
-          assets.push(asset);
         }
       } catch {
         // Skip failed frames, continue with others
       }
-    }
+      return null;
+    };
+
+    const results = await poolMap(
+      timestamps,
+      (timestamp, index) => extractFrame(index, timestamp),
+      CONCURRENCY,
+    );
+    const assets = results.filter((a): a is MediaAsset => a !== null);
 
     return {
       videoId: options.videoId,
@@ -204,4 +206,26 @@ export class ThumbnailExtractor {
       return undefined;
     }
   }
+}
+
+/** Run `fn` over `items` with at most `concurrency` in-flight at once, preserving order. */
+async function poolMap<T, R>(
+  items: T[],
+  fn: (item: T, index: number) => Promise<R>,
+  concurrency: number,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  async function worker(): Promise<void> {
+    while (nextIndex < items.length) {
+      const i = nextIndex++;
+      results[i] = await fn(items[i], i);
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, () => worker()),
+  );
+  return results;
 }
