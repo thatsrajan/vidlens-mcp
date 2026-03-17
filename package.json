@@ -1,6 +1,6 @@
 {
   "name": "vidlens-mcp",
-  "version": "1.0.24",
+  "version": "1.0.25",
   "description": "VidLens MCP — The YouTube intelligence layer for AI agents. 41 tools, zero config, three-tier fallback, semantic + visual search.",
   "type": "module",
   "main": "dist/index.js",
@@ -17,7 +17,7 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/cli.ts",
     "start": "node dist/cli.js",
-    "test": "npm run build && node --test dist/test/**/*.test.js",
+    "test": "npm run build && node --test dist/test/*.test.js",
     "smoke": "node dist/scripts/smoke.js",
     "smoke:dry": "node dist/scripts/smoke.js --dry-run"
   },

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/readme-banner.png" alt="VidLens — The YouTube intelligence layer for AI agents" width="800" />
+  <img src="https://raw.githubusercontent.com/rajanrengasamy/vidlens-mcp/main/assets/readme-banner.png" alt="VidLens — The YouTube intelligence layer for AI agents" width="800" />
 </p>
 
 <p align="center">
@@ -279,7 +279,7 @@ Checks: Node.js version, yt-dlp availability, API key validation, data directory
 ### System Overview
 
 <p align="center">
-  <img src="assets/arch-system-overview.png" alt="VidLens System Overview" width="800" />
+  <img src="https://raw.githubusercontent.com/rajanrengasamy/vidlens-mcp/main/assets/arch-system-overview.png" alt="VidLens System Overview" width="800" />
 </p>
 
 ### How the Fallback Chain Works
@@ -287,7 +287,7 @@ Checks: Node.js version, yt-dlp availability, API key validation, data directory
 Every tool that touches YouTube data uses the same resilience pattern:
 
 <p align="center">
-  <img src="assets/arch-fallback-chain.png" alt="VidLens Fallback Chain" width="800" />
+  <img src="https://raw.githubusercontent.com/rajanrengasamy/vidlens-mcp/main/assets/arch-fallback-chain.png" alt="VidLens Fallback Chain" width="800" />
 </p>
 
 Every response includes a `provenance` field telling you exactly which tier served the data and whether anything was partial. No silent degradation — you always know what happened.
@@ -297,7 +297,7 @@ Every response includes a `provenance` field telling you exactly which tier serv
 Visual search is not transcript reuse. It's a dedicated three-layer index:
 
 <p align="center">
-  <img src="assets/arch-visual-pipeline.png" alt="VidLens Visual Search Pipeline" width="800" />
+  <img src="https://raw.githubusercontent.com/rajanrengasamy/vidlens-mcp/main/assets/arch-visual-pipeline.png" alt="VidLens Visual Search Pipeline" width="800" />
 </p>
 
 **Three layers, all real:**
@@ -310,7 +310,7 @@ Visual search is not transcript reuse. It's a dedicated three-layer index:
 Everything lives in a single directory. No external databases, no Docker, no infrastructure.
 
 <p align="center">
-  <img src="assets/arch-data-storage.png" alt="VidLens Data Storage" width="600" />
+  <img src="https://raw.githubusercontent.com/rajanrengasamy/vidlens-mcp/main/assets/arch-data-storage.png" alt="VidLens Data Storage" width="600" />
 </p>
 
 One directory. Portable. Back it up by copying. Delete it to start fresh.

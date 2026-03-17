@@ -32,6 +32,3 @@ jobs:
 
       - name: Run tests
         run: npm test
-
-      - name: Run token benchmark
-        run: npm run benchmark
