@@ -21,6 +21,8 @@
     "dev": "tsx src/cli.ts",
     "start": "node dist/cli.js",
     "test": "npm run build && node --test dist/test/*.test.js",
+    "release:verify": "npm test && npm pack --dry-run",
+    "release:publish": "npm test && npm publish --access public",
     "smoke": "node dist/scripts/smoke.js",
     "smoke:dry": "node dist/scripts/smoke.js --dry-run"
   },
