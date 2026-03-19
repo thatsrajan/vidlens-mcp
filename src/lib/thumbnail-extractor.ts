@@ -6,7 +6,7 @@
  * - Does NOT do visual search, visual embeddings, or frame classification
  * - Provides raw frame files that can be used by external vision models
  */
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { execa } from "execa";
 import { MediaStore, type MediaAsset } from "./media-store.js";
@@ -61,8 +61,8 @@ export class ThumbnailExtractor {
       );
     }
 
-    // Get video duration
-    const durationSec = await this.probeDuration(videoPath);
+    const videoProbe = await this.probeVideo(videoPath);
+    const durationSec = videoProbe.durationSec;
     if (!durationSec || durationSec <= 0) {
       throw new Error(`Could not determine duration for ${videoPath}`);
     }
@@ -91,74 +91,57 @@ export class ThumbnailExtractor {
       this.store.listAssetsForVideo(options.videoId).map((a) => [a.filePath, a]),
     );
 
-    // Extract frames in parallel with bounded concurrency
-    const CONCURRENCY = 4;
-
-    const extractFrame = async (index: number, timestamp: number): Promise<MediaAsset | null> => {
-      const outFile = join(
-        framesDir,
-        `${options.videoId}_${String(index).padStart(4, "0")}_${Math.round(timestamp)}s.${imageFormat}`,
-      );
-
-      // Skip if already extracted and registered
-      if (existsSync(outFile)) {
-        const existing = existingByPath.get(outFile);
-        if (existing) return existing;
-      }
-
-      try {
-        await execa(this.ffmpegBinary, [
-          "-ss", String(timestamp),
-          "-i", videoPath,
-          "-vframes", "1",
-          "-vf", `scale=${width}:-1`,
-          "-q:v", "2",
-          "-y",
-          outFile,
-        ], { timeout: 30_000, reject: true });
-
-        if (existsSync(outFile)) {
-          // Get dimensions
-          let frameWidth: number | undefined;
-          let frameHeight: number | undefined;
-          try {
-            const { stdout } = await execa(this.ffprobeBinary, [
-              "-v", "error",
-              "-select_streams", "v:0",
-              "-show_entries", "stream=width,height",
-              "-of", "json",
-              outFile,
-            ], { timeout: 10_000 });
-            const probe = JSON.parse(stdout) as {
-              streams?: Array<{ width?: number; height?: number }>;
-            };
-            frameWidth = probe.streams?.[0]?.width;
-            frameHeight = probe.streams?.[0]?.height;
-          } catch {
-            // non-critical
-          }
-
-          return this.store.registerAsset({
-            videoId: options.videoId,
-            kind: "keyframe",
-            filePath: outFile,
-            timestampSec: timestamp,
-            width: frameWidth,
-            height: frameHeight,
-          });
-        }
-      } catch {
-        // Skip failed frames, continue with others
-      }
-      return null;
-    };
-
-    const results = await poolMap(
-      timestamps,
-      (timestamp, index) => extractFrame(index, timestamp),
-      CONCURRENCY,
+    const plannedOutputs = timestamps.map((_, index) =>
+      join(framesDir, `${options.videoId}_${String(index + 1).padStart(4, "0")}.${imageFormat}`),
     );
-    const assets = results.filter((a): a is MediaAsset => a !== null);
+    const existingAssets = plannedOutputs.map((filePath) =>
+      existsSync(filePath) ? (existingByPath.get(filePath) ?? null) : null,
+    );
+
+    if (existingAssets.every((asset): asset is MediaAsset => asset !== null)) {
+      return {
+        videoId: options.videoId,
+        framesExtracted: existingAssets.length,
+        assets: existingAssets,
+        durationMs: Date.now() - startMs,
+      };
+    }
+
+    const hasPartialExistingAssets = existingAssets.some((asset) => asset !== null);
+    const derivedDimensions = deriveOutputDimensions(videoProbe.width, videoProbe.height, width);
+
+    let assets: MediaAsset[];
+    if (hasPartialExistingAssets) {
+      assets = await this.extractFramesIndividually({
+        videoId: options.videoId,
+        videoPath,
+        timestamps,
+        plannedOutputs,
+        width,
+        existingByPath,
+      });
+    } else {
+      try {
+        await this.extractFramesSinglePass(videoPath, framesDir, options.videoId, imageFormat, intervalSec, width);
+        assets = this.registerExtractedFrames({
+          videoId: options.videoId,
+          timestamps,
+          plannedOutputs,
+          existingByPath,
+          frameWidth: derivedDimensions?.width,
+          frameHeight: derivedDimensions?.height,
+        });
+      } catch {
+        assets = await this.extractFramesIndividually({
+          videoId: options.videoId,
+          videoPath,
+          timestamps,
+          plannedOutputs,
+          width,
+          existingByPath,
+        });
+      }
+    }
 
     return {
       videoId: options.videoId,
@@ -191,21 +174,162 @@ export class ThumbnailExtractor {
     return video?.filePath;
   }
 
-  private async probeDuration(filePath: string): Promise<number | undefined> {
+  private async probeVideo(filePath: string): Promise<{
+    durationSec?: number;
+    width?: number;
+    height?: number;
+  }> {
     try {
       const { stdout } = await execa(this.ffprobeBinary, [
         "-v", "error",
-        "-show_entries", "format=duration",
+        "-show_entries", "format=duration:stream=width,height",
         "-of", "json",
         filePath,
       ], { timeout: 15_000 });
-      const data = JSON.parse(stdout) as { format?: { duration?: string } };
+      const data = JSON.parse(stdout) as {
+        format?: { duration?: string };
+        streams?: Array<{ width?: number; height?: number }>;
+      };
       const dur = data.format?.duration;
-      return dur ? parseFloat(dur) : undefined;
+      return {
+        durationSec: dur ? parseFloat(dur) : undefined,
+        width: data.streams?.[0]?.width,
+        height: data.streams?.[0]?.height,
+      };
     } catch {
-      return undefined;
+      return {};
     }
   }
+
+  private async extractFramesSinglePass(
+    videoPath: string,
+    framesDir: string,
+    videoId: string,
+    imageFormat: "jpg" | "png" | "webp",
+    intervalSec: number,
+    width: number,
+  ): Promise<void> {
+    const outputPattern = join(framesDir, `${videoId}_%04d.${imageFormat}`);
+    await execa(this.ffmpegBinary, [
+      "-i", videoPath,
+      "-vf", `fps=1/${intervalSec},scale=${width}:-1`,
+      "-q:v", "2",
+      "-vsync", "vfr",
+      "-y",
+      outputPattern,
+    ], { timeout: 120_000, reject: true });
+  }
+
+  private async extractFramesIndividually(params: {
+    videoId: string;
+    videoPath: string;
+    timestamps: number[];
+    plannedOutputs: string[];
+    width: number;
+    existingByPath: Map<string, MediaAsset>;
+  }): Promise<MediaAsset[]> {
+    const CONCURRENCY = 4;
+
+    const results = await poolMap(
+      params.timestamps,
+      async (timestamp, index) => {
+        const outFile = params.plannedOutputs[index];
+        if (existsSync(outFile)) {
+          const existing = params.existingByPath.get(outFile);
+          if (existing) return existing;
+        }
+
+        try {
+          await execa(this.ffmpegBinary, [
+            "-ss", String(timestamp),
+            "-i", params.videoPath,
+            "-vframes", "1",
+            "-vf", `scale=${params.width}:-1`,
+            "-q:v", "2",
+            "-y",
+            outFile,
+          ], { timeout: 30_000, reject: true });
+
+          if (!existsSync(outFile)) {
+            return null;
+          }
+
+          const frameProbe = await this.probeVideo(outFile);
+          return this.store.registerAsset({
+            videoId: params.videoId,
+            kind: "keyframe",
+            filePath: outFile,
+            timestampSec: timestamp,
+            width: frameProbe.width,
+            height: frameProbe.height,
+          });
+        } catch {
+          return null;
+        }
+      },
+      CONCURRENCY,
+    );
+
+    return results.filter((asset): asset is MediaAsset => asset !== null);
+  }
+
+  private registerExtractedFrames(params: {
+    videoId: string;
+    timestamps: number[];
+    plannedOutputs: string[];
+    existingByPath: Map<string, MediaAsset>;
+    frameWidth?: number;
+    frameHeight?: number;
+  }): MediaAsset[] {
+    const extractedFiles = new Set(
+      params.plannedOutputs.filter((filePath) => existsSync(filePath)),
+    );
+    if (extractedFiles.size === 0) {
+      const filesOnDisk = new Set(
+        readdirSync(join(this.store.videoDir(params.videoId), "keyframes"))
+          .filter((name) => name.startsWith(`${params.videoId}_`))
+          .map((name) => join(this.store.videoDir(params.videoId), "keyframes", name)),
+      );
+      for (const filePath of params.plannedOutputs) {
+        if (filesOnDisk.has(filePath)) {
+          extractedFiles.add(filePath);
+        }
+      }
+    }
+
+    const assets: MediaAsset[] = [];
+    params.plannedOutputs.forEach((filePath, index) => {
+      if (!extractedFiles.has(filePath)) {
+        return;
+      }
+      const existing = params.existingByPath.get(filePath);
+      if (existing) {
+        assets.push(existing);
+        return;
+      }
+      assets.push(this.store.registerAsset({
+        videoId: params.videoId,
+        kind: "keyframe",
+        filePath,
+        timestampSec: params.timestamps[index],
+        width: params.frameWidth,
+        height: params.frameHeight,
+      }));
+    });
+    return assets;
+  }
+}
+
+function deriveOutputDimensions(sourceWidth: number | undefined, sourceHeight: number | undefined, requestedWidth: number): {
+  width: number;
+  height: number;
+} | null {
+  if (!sourceWidth || !sourceHeight || sourceWidth <= 0 || sourceHeight <= 0) {
+    return null;
+  }
+  const width = Math.min(requestedWidth, sourceWidth);
+  const height = Math.max(1, Math.round(sourceHeight * (width / sourceWidth)));
+  return { width, height };
 }
 
 /** Run `fn` over `items` with at most `concurrency` in-flight at once, preserving order. */

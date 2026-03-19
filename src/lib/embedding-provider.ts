@@ -16,6 +16,7 @@ export interface EmbeddingProvider {
 
 const DEFAULT_GEMINI_MODEL = process.env.YOUTUBE_MCP_GEMINI_MODEL || "gemini-embedding-2-preview";
 const DEFAULT_GEMINI_DIMENSIONS = Number(process.env.YOUTUBE_MCP_GEMINI_DIMENSIONS || 768);
+const GEMINI_PROVIDER_CACHE = new Map<string, Promise<EmbeddingProvider | null>>();
 
 export function resolveEmbeddingSelection(input?: {
   embeddingProvider?: string;
@@ -64,14 +65,29 @@ export async function createEmbeddingProvider(selection: EmbeddingSelection): Pr
     return null;
   }
 
+  const model = selection.model ?? DEFAULT_GEMINI_MODEL;
+  const dimensions = normalizeDimensions(selection.dimensions ?? DEFAULT_GEMINI_DIMENSIONS);
+  const cacheKey = `gemini:${model}:${dimensions}`;
+  const cached = GEMINI_PROVIDER_CACHE.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const providerPromise = createGeminiProvider({ model, dimensions });
+  GEMINI_PROVIDER_CACHE.set(cacheKey, providerPromise);
+  return providerPromise;
+}
+
+async function createGeminiProvider(selection: { model: string; dimensions: number }): Promise<EmbeddingProvider | null> {
+  const { model, dimensions } = selection;
+
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   if (!apiKey) {
     throw new Error("Gemini embedding provider selected but GEMINI_API_KEY/GOOGLE_API_KEY is not set.");
   }
 
-  const client = new GoogleGenAI({ apiKey });
-  const model = selection.model ?? DEFAULT_GEMINI_MODEL;
-  const dimensions = normalizeDimensions(selection.dimensions ?? DEFAULT_GEMINI_DIMENSIONS);
+  let client: GoogleGenAI | null = null;
+  const getClient = (): GoogleGenAI => client ??= new GoogleGenAI({ apiKey });
 
   return {
     selection: {
@@ -81,6 +97,7 @@ export async function createEmbeddingProvider(selection: EmbeddingSelection): Pr
     },
     async embedDocuments(texts: string[]): Promise<number[][]> {
       if (texts.length === 0) return [];
+      const client = getClient();
       const allEmbeddings: number[][] = [];
       for (const batch of chunk(texts, 16)) {
         const response = await client.models.embedContent({
@@ -97,6 +114,7 @@ export async function createEmbeddingProvider(selection: EmbeddingSelection): Pr
       return allEmbeddings;
     },
     async embedQuery(text: string): Promise<number[]> {
+      const client = getClient();
       const response = await client.models.embedContent({
         model,
         contents: text,

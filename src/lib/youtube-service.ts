@@ -1,4 +1,5 @@
 import { writeFileSync, unlinkSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   average,
@@ -23,6 +24,7 @@ import {
   analyzeComments,
 } from "./analysis.js";
 import { CommentKnowledgeBase } from "./comment-knowledge-base.js";
+import { CacheStore, buildCacheKey, type CacheEntityType } from "./cache-store.js";
 import { createEmbeddingProvider, resolveEmbeddingSelection } from "./embedding-provider.js";
 import { detectKnownClients, readPackageMetadata } from "./install-diagnostics.js";
 import { TranscriptKnowledgeBase } from "./knowledge-base.js";
@@ -111,6 +113,7 @@ import type {
   RemoveMediaAssetOutput,
   ResearchTagsAndTitlesInput,
   ResearchTagsAndTitlesOutput,
+  SearchItem,
   ScoreHookPatternsInput,
   ScoreHookPatternsOutput,
   SearchCommentsInput,
@@ -157,29 +160,65 @@ const FALLBACK_DEPTH: Record<SourceTier, 0 | 1 | 2 | 3> = {
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
+function defaultServiceDataDir(): string {
+  return process.env.VIDLENS_DATA_DIR || join(homedir(), "Library", "Application Support", "vidlens-mcp");
+}
+
 export class YouTubeService {
   private readonly api: YouTubeApiClient;
   private readonly ytdlp: YtDlpClient;
   private readonly pageExtract: PageExtractClient;
   private readonly dryRun: boolean;
-  private readonly knowledgeBase: TranscriptKnowledgeBase;
-  private readonly commentKnowledgeBase: CommentKnowledgeBase;
-  private readonly mediaStore: MediaStore;
-  private readonly mediaDownloader: MediaDownloader;
-  private readonly thumbnailExtractor: ThumbnailExtractor;
-  private readonly visualSearch: VisualSearchEngine;
+  private readonly dataDir: string;
+  private readonly ytDlpBinary?: string;
+  private _knowledgeBase?: TranscriptKnowledgeBase;
+  private _commentKnowledgeBase?: CommentKnowledgeBase;
+  private _mediaStore?: MediaStore;
+  private _mediaDownloader?: MediaDownloader;
+  private _thumbnailExtractor?: ThumbnailExtractor;
+  private _visualSearch?: VisualSearchEngine;
+  private _cacheStore?: CacheStore;
 
   constructor(config: YouTubeServiceConfig = {}) {
     this.api = new YouTubeApiClient({ apiKey: config.apiKey ?? process.env.YOUTUBE_API_KEY });
     this.ytdlp = new YtDlpClient(config.ytDlpBinary);
     this.pageExtract = new PageExtractClient();
     this.dryRun = Boolean(config.dryRun);
-    this.knowledgeBase = new TranscriptKnowledgeBase({ dataDir: config.dataDir });
-    this.commentKnowledgeBase = new CommentKnowledgeBase({ dataDir: config.dataDir });
-    this.mediaStore = new MediaStore({ dataDir: config.dataDir });
-    this.mediaDownloader = new MediaDownloader(this.mediaStore, config.ytDlpBinary);
-    this.thumbnailExtractor = new ThumbnailExtractor(this.mediaStore);
-    this.visualSearch = new VisualSearchEngine(this.mediaStore, this.mediaDownloader, this.thumbnailExtractor, { dataDir: config.dataDir });
+    this.dataDir = config.dataDir ?? defaultServiceDataDir();
+    this.ytDlpBinary = config.ytDlpBinary;
+  }
+
+  private get knowledgeBase(): TranscriptKnowledgeBase {
+    return this._knowledgeBase ??= new TranscriptKnowledgeBase({ dataDir: this.dataDir });
+  }
+
+  private get commentKnowledgeBase(): CommentKnowledgeBase {
+    return this._commentKnowledgeBase ??= new CommentKnowledgeBase({ dataDir: this.dataDir });
+  }
+
+  private get mediaStore(): MediaStore {
+    return this._mediaStore ??= new MediaStore({ dataDir: this.dataDir });
+  }
+
+  private get mediaDownloader(): MediaDownloader {
+    return this._mediaDownloader ??= new MediaDownloader(this.mediaStore, this.ytDlpBinary);
+  }
+
+  private get thumbnailExtractor(): ThumbnailExtractor {
+    return this._thumbnailExtractor ??= new ThumbnailExtractor(this.mediaStore);
+  }
+
+  private get visualSearch(): VisualSearchEngine {
+    return this._visualSearch ??= new VisualSearchEngine(
+      this.mediaStore,
+      this.mediaDownloader,
+      this.thumbnailExtractor,
+      { dataDir: this.dataDir },
+    );
+  }
+
+  private get cacheStore(): CacheStore {
+    return this._cacheStore ??= new CacheStore({ dataDir: this.dataDir });
   }
 
   async findVideos(input: FindVideosInput, options: ServiceOptions = {}): Promise<FindVideosOutput> {
@@ -189,22 +228,37 @@ export class YouTubeService {
     }
 
     const maxResults = clamp(input.maxResults ?? 10, 1, 25);
-    const resolved = await this.executeFallback(
+    const resolved = await this.withCache(
+      "search",
+      "findVideos",
       {
-        youtube_api: () =>
-          this.api.searchVideos(query, {
-            maxResults,
-            order: input.order,
-            regionCode: input.regionCode,
-            publishedAfter: input.publishedAfter,
-            publishedBefore: input.publishedBefore,
-            channelId: input.channelId,
-            duration: input.duration,
-          }),
-        yt_dlp: () => this.ytdlp.search(query, maxResults),
+        query,
+        maxResults,
+        order: input.order ?? null,
+        regionCode: input.regionCode ?? null,
+        publishedAfter: input.publishedAfter ?? null,
+        publishedBefore: input.publishedBefore ?? null,
+        channelId: input.channelId ?? null,
+        duration: input.duration ?? null,
       },
-      this.sampleSearch(query, maxResults),
       options,
+      () => this.executeFallback(
+        {
+          youtube_api: () =>
+            this.api.searchVideos(query, {
+              maxResults,
+              order: input.order,
+              regionCode: input.regionCode,
+              publishedAfter: input.publishedAfter,
+              publishedBefore: input.publishedBefore,
+              channelId: input.channelId,
+              duration: input.duration,
+            }),
+          yt_dlp: () => this.ytdlp.search(query, maxResults),
+        },
+        this.sampleSearch(query, maxResults),
+        options,
+      ),
     );
 
     return {
@@ -227,17 +281,7 @@ export class YouTubeService {
     const videoId = this.requireVideoId(input.videoIdOrUrl);
     const includeTranscriptMeta = input.includeTranscriptMeta ?? true;
     const includeEngagementRatios = input.includeEngagementRatios ?? true;
-
-    const resolved = await this.executeFallback(
-      {
-        youtube_api: () => this.api.getVideoInfo(videoId),
-        yt_dlp: () => this.ytdlp.videoInfo(videoId),
-        page_extract: () => this.pageExtract.getVideoInfo(videoId),
-      },
-      this.sampleVideo(videoId),
-      options,
-      { partialTiers: ["page_extract"] },
-    );
+    const resolved = await this.resolveVideoInfo(videoId, options);
 
     const video = resolved.data;
 
@@ -273,16 +317,7 @@ export class YouTubeService {
 
   async inspectChannel(input: InspectChannelInput, options: ServiceOptions = {}): Promise<InspectChannelOutput> {
     const channelRef = this.requireChannelRef(input.channelIdOrHandleOrUrl);
-    const resolved = await this.executeFallback(
-      {
-        youtube_api: () => this.api.getChannel(channelRef),
-        yt_dlp: () => this.ytdlp.channel(channelRef),
-        page_extract: () => this.pageExtract.getChannelInfo(channelRef),
-      },
-      this.sampleChannel(channelRef),
-      options,
-      { partialTiers: ["page_extract"] },
-    );
+    const resolved = await this.resolveChannel(channelRef, options);
 
     const cadence = await this.bestEffortChannelCadence(channelRef, options);
     const channel = resolved.data;
@@ -320,15 +355,7 @@ export class YouTubeService {
     const maxResults = clamp(input.maxResults ?? 25, 1, 100);
 
     const channel = await this.resolveChannel(channelRef, options);
-    const videos = await this.executeFallback(
-      {
-        youtube_api: () => this.api.listChannelVideos(channelRef, maxResults),
-        yt_dlp: () => this.ytdlp.channelVideos(channelRef, maxResults),
-      },
-      this.sampleChannelVideos(channel.data.channelId),
-      options,
-      { partialTiers: ["yt_dlp"] },
-    );
+    const videos = await this.resolveChannelVideos(channelRef, maxResults, channel.data.channelId, options);
 
     const filtered = this.filterAndSortCatalog(videos.data, {
       sortBy: input.sortBy,
@@ -361,14 +388,7 @@ export class YouTubeService {
     const limit = clamp(input.limit ?? 32000, 1000, 64000);
     const chunkWindowSec = clamp(input.chunkWindowSec ?? 120, 30, 900);
 
-    const resolved = await this.executeFallback(
-      {
-        yt_dlp: () => this.ytdlp.transcript(videoId, input.language),
-      },
-      this.sampleTranscript(videoId),
-      options,
-      { partialTiers: [] },
-    );
+    const resolved = await this.resolveTranscript(videoId, input.language, options);
 
     const transcript = resolved.data;
     const totalCharacters = transcript.transcriptText.length;
@@ -460,16 +480,13 @@ export class YouTubeService {
     const maxTopLevel = clamp(input.maxTopLevel ?? 50, 1, 200);
     const includeReplies = input.includeReplies ?? false;
     const maxRepliesPerThread = clamp(input.maxRepliesPerThread ?? 3, 0, 20);
-
-    const resolved = await this.executeFallback(
-      {
-        youtube_api: () =>
-          this.api.getVideoComments(videoId, maxTopLevel, input.order ?? "relevance", includeReplies, maxRepliesPerThread),
-        yt_dlp: () => this.ytdlp.comments(videoId, maxTopLevel),
-      },
-      this.sampleComments(videoId),
+    const resolved = await this.resolveComments(
+      videoId,
+      maxTopLevel,
+      input.order ?? "relevance",
+      includeReplies,
+      maxRepliesPerThread,
       options,
-      { partialTiers: includeReplies ? ["yt_dlp"] : [] },
     );
 
     return {
@@ -2447,15 +2464,21 @@ export class YouTubeService {
     ref: ChannelRef,
     options: ServiceOptions,
   ): Promise<{ data: ChannelRecord; provenance: Provenance }> {
-    return this.executeFallback(
-      {
-        youtube_api: () => this.api.getChannel(ref),
-        yt_dlp: () => this.ytdlp.channel(ref),
-        page_extract: () => this.pageExtract.getChannelInfo(ref),
-      },
-      this.sampleChannel(ref),
+    return this.withCache(
+      "channel_meta",
+      "resolveChannel",
+      { channelRef: this.stringifyChannelRef(ref) },
       options,
-      { partialTiers: ["page_extract"] },
+      () => this.executeFallback(
+        {
+          youtube_api: () => this.api.getChannel(ref),
+          yt_dlp: () => this.ytdlp.channel(ref),
+          page_extract: () => this.pageExtract.getChannelInfo(ref),
+        },
+        this.sampleChannel(ref),
+        options,
+        { partialTiers: ["page_extract"] },
+      ),
     );
   }
 
@@ -2467,15 +2490,7 @@ export class YouTubeService {
     provenance: Provenance;
   }> {
     try {
-      const catalog = await this.executeFallback(
-        {
-          youtube_api: () => this.api.listChannelVideos(ref, 30),
-          yt_dlp: () => this.ytdlp.channelVideos(ref, 30),
-        },
-        this.sampleChannelVideos("UC_x5XG1OV2P6uZZ5FSM9Ttw"),
-        options,
-        { partialTiers: ["yt_dlp"] },
-      );
+      const catalog = await this.resolveChannelVideos(ref, 30, "UC_x5XG1OV2P6uZZ5FSM9Ttw", options);
 
       const dates = catalog.data
         .map((video) => video.publishedAt)
@@ -2506,6 +2521,135 @@ export class YouTubeService {
         provenance: this.makeProvenance("none", true, [`Cadence unavailable: ${toMessage(error)}`]),
       };
     }
+  }
+
+  private async resolveVideoInfo(
+    videoId: string,
+    options: ServiceOptions,
+  ): Promise<{ data: VideoRecord; provenance: Provenance }> {
+    return this.withCache(
+      "video_meta",
+      "resolveVideoInfo",
+      { videoId },
+      options,
+      () => this.executeFallback(
+        {
+          youtube_api: () => this.api.getVideoInfo(videoId),
+          yt_dlp: () => this.ytdlp.videoInfo(videoId),
+          page_extract: () => this.pageExtract.getVideoInfo(videoId),
+        },
+        this.sampleVideo(videoId),
+        options,
+        { partialTiers: ["page_extract"] },
+      ),
+    );
+  }
+
+  private async resolveTranscript(
+    videoId: string,
+    language: string | undefined,
+    options: ServiceOptions,
+  ): Promise<{ data: TranscriptRecord; provenance: Provenance }> {
+    return this.withCache(
+      "transcript",
+      "resolveTranscript",
+      { videoId, language: language ?? null },
+      options,
+      () => this.executeFallback(
+        {
+          yt_dlp: () => this.ytdlp.transcript(videoId, language),
+        },
+        this.sampleTranscript(videoId),
+        options,
+        { partialTiers: [] },
+      ),
+    );
+  }
+
+  private async resolveComments(
+    videoId: string,
+    maxTopLevel: number,
+    order: "relevance" | "time",
+    includeReplies: boolean,
+    maxRepliesPerThread: number,
+    options: ServiceOptions,
+  ): Promise<{ data: CommentRecord[]; provenance: Provenance }> {
+    return this.withCache(
+      "comments",
+      "resolveComments",
+      {
+        videoId,
+        maxTopLevel,
+        order,
+        includeReplies,
+        maxRepliesPerThread,
+      },
+      options,
+      () => this.executeFallback(
+        {
+          youtube_api: () =>
+            this.api.getVideoComments(videoId, maxTopLevel, order, includeReplies, maxRepliesPerThread),
+          yt_dlp: () => this.ytdlp.comments(videoId, maxTopLevel),
+        },
+        this.sampleComments(videoId),
+        options,
+        { partialTiers: includeReplies ? ["yt_dlp"] : [] },
+      ),
+    );
+  }
+
+  private async resolveChannelVideos(
+    ref: ChannelRef,
+    maxResults: number,
+    sampleChannelId: string,
+    options: ServiceOptions,
+  ): Promise<{ data: VideoRecord[]; provenance: Provenance }> {
+    return this.withCache(
+      "channel_meta",
+      "resolveChannelVideos",
+      {
+        channelRef: this.stringifyChannelRef(ref),
+        maxResults,
+      },
+      options,
+      () => this.executeFallback(
+        {
+          youtube_api: () => this.api.listChannelVideos(ref, maxResults),
+          yt_dlp: () => this.ytdlp.channelVideos(ref, maxResults),
+        },
+        this.sampleChannelVideos(sampleChannelId),
+        options,
+        { partialTiers: ["yt_dlp"] },
+      ),
+    );
+  }
+
+  private async withCache<T>(
+    entityType: CacheEntityType,
+    scope: string,
+    inputs: Record<string, unknown>,
+    options: ServiceOptions,
+    load: () => Promise<T>,
+  ): Promise<T> {
+    if (this.isDryRun(options)) {
+      return load();
+    }
+
+    const key = buildCacheKey(scope, inputs);
+    const cached = this.cacheStore.get<T>(key);
+    if (cached !== null) {
+      return cached;
+    }
+
+    const value = await load();
+    this.cacheStore.set(key, entityType, value);
+    return value;
+  }
+
+  private stringifyChannelRef(ref: ChannelRef): string {
+    if (ref.type === "id") return `id:${ref.value}`;
+    if (ref.type === "handle") return `handle:${ref.value.toLowerCase()}`;
+    return `url:${ref.value}`;
   }
 
   private filterAndSortCatalog(

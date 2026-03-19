@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.0.27] - 2026-03-19
+
+### Changed
+- Lazy-loaded heavy service and media subsystems to reduce cold-start cost for simple MCP sessions
+- Added service-boundary caching for repeated metadata, transcript, channel, and comment reads
+- Moved transcript `videoIdFilter` work into SQL and added supporting transcript indexes
+- Optimized visual search by adding a search-specific row-loading path and query embedding cache
+- Reduced npm package payload by excluding compiled tests and source maps from published artifacts
+
+### Fixed
+- Visual indexing no longer pays one `ffmpeg` startup per frame on the fast path, with safe fallback to the previous extraction behavior when needed
+
 ### Added
 - Cache store module (SQLite-backed TTL cache)
 - Rate limiter module (token bucket for API quota protection)

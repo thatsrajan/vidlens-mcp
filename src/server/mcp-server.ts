@@ -660,10 +660,15 @@ export const tools: Tool[] = [
 ];
 
 export function createYouTubeMcpServer(service = new YouTubeService()): Server {
-  // Initialize media subsystem (lazy — created once on first server start)
-  const mediaStore = new MediaStore();
-  const mediaDownloader = new MediaDownloader(mediaStore);
-  const thumbnailExtractor = new ThumbnailExtractor(mediaStore);
+  let mediaStore: MediaStore | undefined;
+  let mediaDownloader: MediaDownloader | undefined;
+  let thumbnailExtractor: ThumbnailExtractor | undefined;
+
+  const getMediaStore = (): MediaStore => mediaStore ??= new MediaStore();
+  const getMediaDownloader = (): MediaDownloader =>
+    mediaDownloader ??= new MediaDownloader(getMediaStore());
+  const getThumbnailExtractor = (): ThumbnailExtractor =>
+    thumbnailExtractor ??= new ThumbnailExtractor(getMediaStore());
 
   const server = new Server(
     {
@@ -687,7 +692,7 @@ export function createYouTubeMcpServer(service = new YouTubeService()): Server {
       const toolName = request.params.name;
       const result = await executeTool(
         service, toolName, args, dryRun,
-        mediaStore, mediaDownloader, thumbnailExtractor,
+        getMediaStore, getMediaDownloader, getThumbnailExtractor,
       );
 
       // Visual search: auto-generate HTML gallery, strip framePaths from JSON
@@ -780,9 +785,9 @@ async function executeTool(
   toolName: string,
   args: Record<string, unknown>,
   dryRun: boolean,
-  mediaStore?: MediaStore,
-  mediaDownloader?: MediaDownloader,
-  thumbnailExtractor?: ThumbnailExtractor,
+  getMediaStore: () => MediaStore,
+  getMediaDownloader: () => MediaDownloader,
+  getThumbnailExtractor: () => ThumbnailExtractor,
 ): Promise<unknown> {
   switch (toolName) {
     case "findVideos":
@@ -1108,7 +1113,8 @@ async function executeTool(
 
     // ── Media / Asset tools ──────────────────────────────────
     case "downloadAsset": {
-      if (!mediaStore || !mediaDownloader) throw new Error("Media subsystem not initialized");
+      const mediaStore = getMediaStore();
+      const mediaDownloader = getMediaDownloader();
       const videoIdOrUrl = readString(args, "videoIdOrUrl");
       const format = readString(args, "format") as "best_video" | "best_audio" | "thumbnail" | "worst_video";
       const maxSizeMb = optionalNumber(args, "maxSizeMb");
@@ -1135,7 +1141,7 @@ async function executeTool(
     }
 
     case "listMediaAssets": {
-      if (!mediaStore) throw new Error("Media subsystem not initialized");
+      const mediaStore = getMediaStore();
       const videoIdOrUrl = optionalString(args, "videoIdOrUrl");
       const kind = optionalString(args, "kind") as "video" | "audio" | "thumbnail" | "keyframe" | undefined;
       const limit = optionalNumber(args, "limit");
@@ -1178,7 +1184,7 @@ async function executeTool(
     }
 
     case "removeMediaAsset": {
-      if (!mediaStore) throw new Error("Media subsystem not initialized");
+      const mediaStore = getMediaStore();
       const assetId = optionalString(args, "assetId");
       const videoIdOrUrl = optionalString(args, "videoIdOrUrl");
       const deleteFiles = readBoolean(args, "deleteFiles", true);
@@ -1209,7 +1215,8 @@ async function executeTool(
     }
 
     case "extractKeyframes": {
-      if (!mediaStore || !thumbnailExtractor) throw new Error("Media subsystem not initialized");
+      const mediaStore = getMediaStore();
+      const thumbnailExtractor = getThumbnailExtractor();
       const videoIdOrUrl = readString(args, "videoIdOrUrl");
       const videoId = parseVideoId(videoIdOrUrl) ?? videoIdOrUrl;
       const result = await thumbnailExtractor.extractKeyframes({
@@ -1237,27 +1244,25 @@ async function executeTool(
     }
 
     case "mediaStoreHealth": {
-      if (!mediaStore) throw new Error("Media subsystem not initialized");
+      const mediaStore = getMediaStore();
+      const thumbnailExtractor = getThumbnailExtractor();
+      const mediaDownloader = getMediaDownloader();
       const stats = mediaStore.getStats();
       let ffmpegAvailable = false;
       let ffmpegVersion: string | undefined;
       let ytdlpAvailable = false;
       let ytdlpVersion: string | undefined;
 
-      if (thumbnailExtractor) {
-        try {
-          const probeResult = await thumbnailExtractor.probe();
-          ffmpegAvailable = true;
-          ffmpegVersion = probeResult.ffmpeg;
-        } catch { /* unavailable */ }
-      }
-      if (mediaDownloader) {
-        try {
-          const probeResult = await mediaDownloader.probe();
-          ytdlpAvailable = true;
-          ytdlpVersion = probeResult.version;
-        } catch { /* unavailable */ }
-      }
+      try {
+        const probeResult = await thumbnailExtractor.probe();
+        ffmpegAvailable = true;
+        ffmpegVersion = probeResult.ffmpeg;
+      } catch { /* unavailable */ }
+      try {
+        const probeResult = await mediaDownloader.probe();
+        ytdlpAvailable = true;
+        ytdlpVersion = probeResult.version;
+      } catch { /* unavailable */ }
 
       const provenance = { sourceTier: "none" as const, fetchedAt: new Date().toISOString(), fallbackDepth: 0 as const, partial: false };
       return {

@@ -17,6 +17,7 @@
 VidLens is a [Model Context Protocol](https://modelcontextprotocol.io/) server that gives AI agents deep, reliable access to YouTube. Not just transcripts - full intelligence: sentiment analysis, trend discovery, semantic search, media assets, creator analytics, and image-backed visual search.
 
 **No API key required to start.** Every tool has a three-tier fallback chain (YouTube API → yt-dlp → page extraction) so nothing breaks when quota runs out or keys aren't configured.
+Heavy subsystems are lazy-loaded, repeat read paths are cached, and the visual pipeline is optimized to reduce user-visible wait time.
 
 ---
 

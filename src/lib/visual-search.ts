@@ -169,6 +169,27 @@ interface RawVisualRow {
   updated_at: string;
 }
 
+interface RawVisualSearchRow {
+  frame_id: string;
+  video_id: string;
+  frame_asset_id: string | null;
+  frame_path: string;
+  timestamp_sec: number;
+  source_video_url: string;
+  source_video_title: string | null;
+  ocr_text: string | null;
+  ocr_confidence: number | null;
+  visual_description: string | null;
+  retrieval_text: string | null;
+  text_embedding_json: string | null;
+  description_model: string | null;
+  embedding_provider: string | null;
+  embedding_model: string | null;
+  embedding_dimensions: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export class VisualIndexStore {
   private readonly db: DatabaseSync;
   readonly dataDir: string;
@@ -290,6 +311,37 @@ export class VisualIndexStore {
     return rows.map(rowToVisualRecord);
   }
 
+  listSearchFrames(options: { videoId?: string } = {}): VisualIndexRecord[] {
+    const query = `
+      SELECT
+        frame_id,
+        video_id,
+        frame_asset_id,
+        frame_path,
+        timestamp_sec,
+        source_video_url,
+        source_video_title,
+        ocr_text,
+        ocr_confidence,
+        visual_description,
+        retrieval_text,
+        text_embedding_json,
+        description_model,
+        embedding_provider,
+        embedding_model,
+        embedding_dimensions,
+        created_at,
+        updated_at
+      FROM visual_frames
+      ${options.videoId ? "WHERE video_id = ? " : ""}
+      ORDER BY ${options.videoId ? "timestamp_sec ASC" : "updated_at DESC"}
+    `;
+    const rows = options.videoId
+      ? this.db.prepare(query).all(options.videoId) as unknown as RawVisualSearchRow[]
+      : this.db.prepare(query).all() as unknown as RawVisualSearchRow[];
+    return rows.map(rowToVisualSearchRecord);
+  }
+
   countFrames(videoId?: string): number {
     if (videoId) {
       const row = this.db.prepare("SELECT COUNT(*) AS count FROM visual_frames WHERE video_id = ?").get(videoId) as { count: number };
@@ -314,6 +366,7 @@ export class VisualSearchEngine {
   readonly store: VisualIndexStore;
   readonly geminiDescriber: GeminiVisualDescriber;
   readonly visionAnalyzer: MacOSVisionAnalyzer;
+  private readonly queryEmbeddingCache = new SimpleLruCache<string, number[]>(64);
 
   constructor(
     private readonly mediaStore: MediaStore,
@@ -478,7 +531,7 @@ export class VisualSearchEngine {
       });
     }
 
-    const frames = this.store.listFrames({ videoId: params.videoId }).filter((frame) => existsSync(frame.framePath));
+    const frames = this.store.listSearchFrames({ videoId: params.videoId }).filter((frame) => existsSync(frame.framePath));
     if (frames.length === 0) {
       throw new Error("No indexed visual frames found. Run indexVisualContent first, or provide videoIdOrUrl so search can auto-index it.");
     }
@@ -492,8 +545,15 @@ export class VisualSearchEngine {
         model: embeddingSummary.model,
         dimensions: embeddingSummary.dimensions,
       };
-      const provider = await createEmbeddingProvider(selection);
-      semanticQueryEmbedding = provider ? await provider.embedQuery(rawQuery ?? normalizedQuery) : undefined;
+      const cacheKey = buildEmbeddingCacheKey(rawQuery ?? normalizedQuery, selection);
+      semanticQueryEmbedding = this.queryEmbeddingCache.get(cacheKey);
+      if (!semanticQueryEmbedding) {
+        const provider = await createEmbeddingProvider(selection);
+        semanticQueryEmbedding = provider ? await provider.embedQuery(rawQuery ?? normalizedQuery) : undefined;
+        if (semanticQueryEmbedding?.length) {
+          this.queryEmbeddingCache.set(cacheKey, semanticQueryEmbedding);
+        }
+      }
     }
 
     const results = frames
@@ -639,6 +699,29 @@ function rowToVisualRecord(row: RawVisualRow): VisualIndexRecord {
   };
 }
 
+function rowToVisualSearchRecord(row: RawVisualSearchRow): VisualIndexRecord {
+  return {
+    frameId: row.frame_id,
+    videoId: row.video_id,
+    frameAssetId: row.frame_asset_id ?? undefined,
+    framePath: row.frame_path,
+    timestampSec: row.timestamp_sec,
+    sourceVideoUrl: row.source_video_url,
+    sourceVideoTitle: row.source_video_title ?? undefined,
+    ocrText: row.ocr_text ?? undefined,
+    ocrConfidence: row.ocr_confidence ?? undefined,
+    visualDescription: row.visual_description ?? undefined,
+    retrievalText: row.retrieval_text ?? undefined,
+    textEmbedding: row.text_embedding_json ? normalizeVector(JSON.parse(row.text_embedding_json) as number[]) : undefined,
+    descriptionModel: row.description_model ?? undefined,
+    embeddingProvider: (row.embedding_provider as "none" | "gemini" | null) ?? undefined,
+    embeddingModel: row.embedding_model ?? undefined,
+    embeddingDimensions: row.embedding_dimensions ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function ensureColumn(db: DatabaseSync, table: string, column: string, definition: string): void {
   try {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
@@ -657,6 +740,14 @@ function buildRetrievalText(input: { timestampSec: number; ocrText?: string; vis
     input.visualDescription ? `scene ${input.visualDescription}` : undefined,
   ].filter(Boolean);
   return parts.join(". ");
+}
+
+function buildEmbeddingCacheKey(query: string, selection: EmbeddingSelection): string {
+  return JSON.stringify({
+    query: query.trim(),
+    model: selection.model ?? "",
+    dimensions: selection.dimensions ?? 0,
+  });
 }
 
 function scoreFrameAgainstQuery(params: {
@@ -872,6 +963,36 @@ function normalizeVector(values: number[] | undefined): number[] | undefined {
 function round(value: number, digits = 3): number {
   const factor = 10 ** digits;
   return Math.round(value * factor) / factor;
+}
+
+class SimpleLruCache<K, V> {
+  private readonly values = new Map<K, V>();
+
+  constructor(private readonly maxEntries: number) {}
+
+  get(key: K): V | undefined {
+    const value = this.values.get(key);
+    if (value === undefined) {
+      return undefined;
+    }
+    this.values.delete(key);
+    this.values.set(key, value);
+    return value;
+  }
+
+  set(key: K, value: V): void {
+    if (this.values.has(key)) {
+      this.values.delete(key);
+    }
+    this.values.set(key, value);
+    if (this.values.size <= this.maxEntries) {
+      return;
+    }
+    const oldestKey = this.values.keys().next().value;
+    if (oldestKey !== undefined) {
+      this.values.delete(oldestKey);
+    }
+  }
 }
 
 function clamp(value: number, min: number, max: number): number {

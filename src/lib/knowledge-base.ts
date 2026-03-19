@@ -174,6 +174,11 @@ export class TranscriptKnowledgeBase {
         value TEXT,
         updated_at TEXT NOT NULL
       );
+
+      CREATE INDEX IF NOT EXISTS idx_transcript_chunks_collection_video_ordinal
+        ON transcript_chunks(collection_id, video_id, ordinal);
+      CREATE INDEX IF NOT EXISTS idx_transcript_chunks_collection
+        ON transcript_chunks(collection_id);
     `);
   }
 
@@ -730,7 +735,8 @@ export class TranscriptKnowledgeBase {
   }
 
   private loadSearchRows(collectionId: string, videoFilter?: Set<string>): SearchRow[] {
-    const rows = this.db.prepare(`
+    const params: string[] = [collectionId];
+    let query = `
       SELECT
         ch.chunk_id,
         ch.collection_id,
@@ -748,8 +754,18 @@ export class TranscriptKnowledgeBase {
       INNER JOIN collection_videos v
         ON v.collection_id = ch.collection_id AND v.video_id = ch.video_id
       WHERE ch.collection_id = ?
-      ORDER BY ch.video_id ASC, ch.ordinal ASC
-    `).all(collectionId) as Array<{
+    `;
+
+    if (videoFilter && videoFilter.size > 0) {
+      const filteredVideoIds = Array.from(videoFilter);
+      const placeholders = filteredVideoIds.map(() => "?").join(", ");
+      query += ` AND ch.video_id IN (${placeholders})`;
+      params.push(...filteredVideoIds);
+    }
+
+    query += " ORDER BY ch.video_id ASC, ch.ordinal ASC";
+
+    const rows = this.db.prepare(query).all(...params) as Array<{
       chunk_id: string;
       collection_id: string;
       video_id: string;
@@ -764,9 +780,7 @@ export class TranscriptKnowledgeBase {
       embedding_json: string | null;
     }>;
 
-    return rows
-      .filter((row) => !videoFilter || videoFilter.has(row.video_id))
-      .map((row) => ({
+    return rows.map((row) => ({
         chunkId: row.chunk_id,
         collectionId: row.collection_id,
         videoId: row.video_id,

@@ -1,6 +1,6 @@
 {
   "name": "vidlens-mcp",
-  "version": "1.0.26",
+  "version": "1.0.27",
   "description": "VidLens MCP — The YouTube intelligence layer for AI agents. 41 tools, zero config, three-tier fallback, semantic + visual search.",
   "type": "module",
   "main": "dist/index.js",
@@ -9,7 +9,10 @@
     "vidlens-mcp": "dist/cli.js"
   },
   "files": [
-    "dist",
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "!dist/**/*.map",
+    "!dist/test/**",
     "README.md",
     "LICENSE"
   ],
