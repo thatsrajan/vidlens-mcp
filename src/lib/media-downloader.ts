@@ -73,6 +73,7 @@ export class MediaDownloader {
     const args = [
       "--no-warnings",
       "--no-playlist",
+      "--no-part",
       "-f", formatArg,
       "--max-filesize", `${maxSizeMb}M`,
       "-o", outputTemplate,
@@ -232,15 +233,16 @@ function ytdlpFormatArg(format: DownloadFormat): string {
 function findDownloadedFile(dir: string, videoId: string): string | undefined {
   if (!existsSync(dir)) return undefined;
   const files = readdirSync(dir);
-  // Prefer files matching the video ID
-  const match = files.find((f) => f.startsWith(videoId) && !f.includes("-thumb"));
+  const isUsable = (f: string) => !f.includes("-thumb") && !f.endsWith(".part") && !f.startsWith(".");
+  // Prefer files matching the video ID (skip .part and intermediate format files)
+  const match = files.find((f) => f.startsWith(videoId) && isUsable(f));
   if (match) return match;
-  // Fallback: newest file that isn't a thumbnail
-  const nonThumb = files
-    .filter((f) => !f.includes("-thumb") && !f.startsWith("."))
+  // Fallback: newest usable file
+  const candidates = files
+    .filter(isUsable)
     .map((f) => ({ name: f, mtime: statSync(join(dir, f)).mtimeMs }))
     .sort((a, b) => b.mtime - a.mtime);
-  return nonThumb[0]?.name;
+  return candidates[0]?.name;
 }
 
 function findFile(dir: string, prefix: string): string | undefined {
