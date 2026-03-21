@@ -116,6 +116,29 @@ export async function runCli(args: string[], deps: Partial<CliDeps> = {}): Promi
         if (key) parsed.geminiApiKey = key;
         resolvedDeps.writeStderr("\n");
       }
+      // If running via npx and no global binary exists, offer to install globally
+      if (resolvedDeps.isNpx) {
+        const pkgName = resolvedDeps.packageMeta.name;
+        const globalBin = findGlobalBinary(pkgName);
+        if (!globalBin) {
+          resolvedDeps.writeStderr(`  \x1b[33m⚡ Startup speed\x1b[0m\n`);
+          resolvedDeps.writeStderr(`    npx checks the npm registry on every Claude Desktop restart (1-30s delay).\n`);
+          resolvedDeps.writeStderr(`    A global install eliminates this — server starts in <0.5s.\n`);
+          const answer = await resolvedDeps.promptLine("    Install globally now? (Y/n): ");
+          if (!answer || answer.trim().toLowerCase() !== "n") {
+            resolvedDeps.writeStderr(`    Installing ${pkgName} globally...\n`);
+            try {
+              const { execSync } = await import("node:child_process");
+              execSync(`npm install -g ${pkgName}`, { stdio: "inherit" });
+              resolvedDeps.writeStderr(`    \x1b[32m✓\x1b[0m Installed globally.\n`);
+            } catch {
+              resolvedDeps.writeStderr(`    \x1b[31m✗\x1b[0m Global install failed. Run manually: npm install -g ${pkgName}\n`);
+            }
+          }
+          resolvedDeps.writeStderr("\n");
+        }
+      }
+
       resolvedDeps.writeStdout(renderSetupReport(parsed, resolvedDeps));
       return 0;
     }
@@ -590,7 +613,21 @@ function renderSetupReport(parsed: ParsedCliArgs, deps: CliDeps): string {
 
   if (errors.length > 0) {
     lines.push("  Run with --print-only to see the generated config without writing files.");
-    lines.push("  Fix any config issues, then rerun: npx vidlens-mcp setup");
+    const rerunCmd = findGlobalBinary(deps.packageMeta.name) ? "vidlens-mcp setup" : "npx vidlens-mcp setup";
+    lines.push(`  Fix any config issues, then rerun: ${rerunCmd}`);
+    lines.push("");
+  }
+
+  // Startup speed tip if still using npx
+  const entry = buildServerEntry({
+    nodePath: deps.nodePath,
+    cliPath: deps.cliPath,
+    dataDir,
+    useNpx: deps.isNpx,
+    packageName: deps.packageMeta.name,
+  });
+  if (entry.command === "npx") {
+    lines.push("  \x1b[33m⚡ Tip:\x1b[0m Run \x1b[1mnpm install -g vidlens-mcp\x1b[0m for faster Claude Desktop startup (<0.5s vs 1-30s).");
     lines.push("");
   }
 
