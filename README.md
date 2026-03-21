@@ -60,7 +60,7 @@ Download videos/audio/thumbnails. Extract keyframes. Index comments for semantic
 <tr><td>🛡️ <strong>Reliability</strong></td><td>✅ Three-tier fallback on every tool</td><td>❌ Single point of failure - API down = broken</td></tr>
 <tr><td>🧠 <strong>Intelligence</strong></td><td>✅ Sentiment, trends, content gaps, hooks</td><td>❌ Raw data dumps - you do the analysis</td></tr>
 <tr><td>📦 <strong>Token efficiency</strong></td><td>✅ 75-87% smaller responses</td><td>❌ Verbose JSON with thumbnails, etags, junk</td></tr>
-<tr><td>🔬 <strong>Depth</strong></td><td>✅ 41 tools across 9 modules</td><td>⚠️ 1-5 tools, mostly transcripts only</td></tr>
+<tr><td>🔬 <strong>Depth</strong></td><td>✅ 41 tools across 10 modules</td><td>⚠️ 1-5 tools, mostly transcripts only</td></tr>
 <tr><td>🖼️ <strong>Visual evidence</strong></td><td>✅ Returns actual frame paths + timestamps, not just text hits</td><td>⚠️ Usually transcript-only or raw frame dumps</td></tr>
 <tr><td>⚖️ <strong>Trademark</strong></td><td>✅ Compliant naming</td><td>⚠️ Most violate YouTube trademark</td></tr>
 </table>

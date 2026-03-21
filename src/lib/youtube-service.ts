@@ -67,6 +67,8 @@ import type {
   ExpandPlaylistOutput,
   ExploreNicheCompetitorsInput,
   ExploreNicheCompetitorsOutput,
+  ExploreYouTubeInput,
+  ExploreYouTubeOutput,
   ExtractKeyframesInput,
   ExtractKeyframesOutput,
   FindSimilarFramesInput,
@@ -2244,6 +2246,229 @@ export class YouTubeService {
     };
   }
 
+  // ── Explore module ──────────────────────────────────────────────
+
+  async exploreYouTube(input: ExploreYouTubeInput, options: ServiceOptions = {}): Promise<ExploreYouTubeOutput> {
+    if (!input.query && (!input.searches || input.searches.length === 0)) {
+      throw this.invalidInput("Provide either 'query' or 'searches'.");
+    }
+
+    if (this.isDryRun(options)) {
+      return this.sampleExploreYouTube(input);
+    }
+
+    // Build search queries
+    const searches = input.searches?.length ? input.searches.slice(0, 5) : expandSearchQuery(input.query!);
+    const maxResults = clamp(input.maxResults ?? (input.mode === "explore" ? 8 : 1), 1, 15);
+    const mode: "specific" | "explore" = input.mode ?? (maxResults > 2 ? "explore" : "specific");
+    const depth = input.depth ?? "standard";
+    const strategy = input.selectionStrategy ?? (mode === "specific" ? "best_match" : "diverse_set");
+    const publishedAfter = freshnessToDate(input.freshness);
+
+    // Run all searches in parallel
+    const searchResults = await Promise.all(
+      searches.map((query) =>
+        this.findVideos(
+          {
+            query,
+            maxResults: 10,
+            order: input.freshness === "week" || input.freshness === "month" ? "date" : "relevance",
+            publishedAfter,
+          },
+          options,
+        ).catch(() => null),
+      ),
+    );
+
+    // Deduplicate candidates
+    const seen = new Set<string>();
+    const candidates: Array<{
+      videoId: string;
+      title: string;
+      channelId?: string;
+      channelTitle: string;
+      publishedAt?: string;
+      durationSec?: number;
+      views?: number;
+    }> = [];
+    for (const result of searchResults) {
+      if (!result) continue;
+      for (const video of result.results) {
+        if (!seen.has(video.videoId)) {
+          seen.add(video.videoId);
+          candidates.push(video);
+        }
+      }
+    }
+
+    if (candidates.length === 0) {
+      return {
+        mode,
+        persona: input.persona,
+        totalCandidatesEvaluated: 0,
+        results: [],
+        followUpHints: ["No videos found. Try broader search terms or remove the creator constraint."],
+        limitations: ["All search queries returned zero results."],
+        provenance: this.makeProvenance("none", true, ["No candidates found."]),
+      };
+    }
+
+    // Score and rank
+    const queryWords = extractQueryWords(searches);
+    const scored = candidates.map((c) => ({
+      candidate: c,
+      score: scoreExploreCandidate(c, queryWords, input.creator),
+    }));
+    scored.sort((a, b) => b.score - a.score);
+
+    // Apply selection strategy
+    const selected = strategy === "diverse_set"
+      ? diverseSelect(scored, maxResults)
+      : scored.slice(0, maxResults);
+
+    // Enrich selected videos in parallel
+    const enriched = await Promise.all(
+      selected.map(async ({ candidate, score }, index) => {
+        let likes: number | undefined;
+        let transcriptAvailable = false;
+        let keyMoments: ExploreYouTubeOutput["results"][number]["keyMoments"];
+
+        try {
+          const inspection = await this.inspectVideo({ videoIdOrUrl: candidate.videoId }, options);
+          likes = inspection.stats.likes;
+          if (inspection.stats.views != null) candidate.views = inspection.stats.views;
+          transcriptAvailable = inspection.transcriptMeta?.available ?? false;
+        } catch {
+          // Use basic metadata from search
+        }
+
+        if (depth !== "quick" && transcriptAvailable) {
+          try {
+            const transcript = await this.readTranscript(
+              { videoIdOrUrl: candidate.videoId, mode: "key_moments" },
+              options,
+            );
+            const segments = transcript.transcript.segments ?? [];
+            keyMoments = segments
+              .filter((s) => s.topicLabel || s.text)
+              .slice(0, 8)
+              .map((s) => ({
+                timestampSec: s.tStartSec,
+                label: (s.topicLabel ?? s.text).slice(0, 100),
+              }));
+          } catch {
+            // Transcript unavailable — not an error
+          }
+        }
+
+        return {
+          rank: index + 1,
+          selectionReason: buildExploreReason(candidate, score, input.creator, input.freshness),
+          video: {
+            videoId: candidate.videoId,
+            title: candidate.title,
+            channelTitle: candidate.channelTitle,
+            publishedAt: candidate.publishedAt,
+            durationSec: candidate.durationSec,
+            views: candidate.views,
+            likes,
+          },
+          keyMoments: keyMoments?.length ? keyMoments : undefined,
+          transcriptSearchReady: false,
+          visualSearchReady: false,
+        };
+      }),
+    );
+
+    // Background enrichment (fire-and-forget)
+    let backgroundEnrichment: ExploreYouTubeOutput["backgroundEnrichment"];
+    const topVideoIds = selected.map((s) => s.candidate.videoId);
+
+    if (depth === "deep" || input.prepareTranscriptSearch || input.prepareVisualSearch) {
+      const assetsBeingPrepared: string[] = [];
+
+      if (depth === "deep" || input.prepareTranscriptSearch) {
+        assetsBeingPrepared.push("transcript_search");
+        const collectionId = `explore-${topVideoIds[0]}`;
+        void this.importVideos(
+          { videoIdsOrUrls: topVideoIds.slice(0, 5), collectionId, activateCollection: true },
+          options,
+        ).catch(() => {});
+      }
+
+      if (input.prepareVisualSearch && topVideoIds.length > 0) {
+        assetsBeingPrepared.push("visual_search");
+        void this.indexVisualContent(
+          { videoIdOrUrl: topVideoIds[0], autoDownload: true, downloadFormat: "worst_video" },
+          options,
+        ).catch(() => {});
+      }
+
+      if (assetsBeingPrepared.length > 0) {
+        backgroundEnrichment = {
+          status: "preparing",
+          videosQueued: topVideoIds.slice(0, assetsBeingPrepared.includes("visual_search") ? 1 : 5),
+          assetsBeingPrepared,
+        };
+      }
+    }
+
+    // Follow-up hints
+    const followUpHints = buildExploreHints(enriched, backgroundEnrichment);
+
+    // Provenance
+    const provenances = searchResults.filter((r): r is NonNullable<typeof r> => r !== null).map((r) => r.provenance);
+
+    return {
+      mode,
+      persona: input.persona,
+      totalCandidatesEvaluated: candidates.length,
+      results: enriched,
+      followUpHints,
+      backgroundEnrichment,
+      limitations: buildExploreLimitations(mode, depth, candidates.length),
+      provenance: provenances.length > 0
+        ? this.mergeProvenances(provenances)
+        : this.makeProvenance("none", true),
+    };
+  }
+
+  private sampleExploreYouTube(input: ExploreYouTubeInput): ExploreYouTubeOutput {
+    const mode = input.mode ?? "specific";
+    return {
+      mode,
+      persona: input.persona,
+      totalCandidatesEvaluated: 12,
+      results: [
+        {
+          rank: 1,
+          selectionReason: "Best match: channel matches creator constraint, published 2 days ago, title directly matches search query.",
+          video: {
+            videoId: "dQw4w9WgXcQ",
+            title: "Dry-run Sample Video — Explore Result",
+            channelTitle: "Sample Creator",
+            publishedAt: new Date().toISOString(),
+            durationSec: 720,
+            views: 150_000,
+            likes: 8_500,
+          },
+          keyMoments: [
+            { timestampSec: 0, label: "Introduction and overview" },
+            { timestampSec: 120, label: "Core topic deep dive" },
+            { timestampSec: 480, label: "Comparison and benchmarks" },
+          ],
+          transcriptSearchReady: false,
+          visualSearchReady: false,
+        },
+      ],
+      followUpHints: [
+        "Dry-run mode: no real search was performed.",
+      ],
+      limitations: ["Dry-run sample only."],
+      provenance: this.makeProvenance("none", false, ["Dry-run mode enabled."]),
+    };
+  }
+
   private async prepareKnowledgeBaseItems(
     videoIdsOrUrls: string[],
     config: {
@@ -3267,4 +3492,196 @@ function estimateTranscriptChunks(transcript: TranscriptRecord): number {
   const lastEnd = transcript.segments[transcript.segments.length - 1]?.tEndSec ?? firstStart;
   const duration = Math.max(1, lastEnd - firstStart);
   return Math.max(1, Math.ceil(duration / 120));
+}
+
+/* ── Explore helpers ─────────────────────────────────────────── */
+
+function expandSearchQuery(query: string): string[] {
+  const year = new Date().getFullYear();
+  const searches = [query];
+  if (!/\b20\d{2}\b/.test(query)) {
+    searches.push(`${query} ${year}`);
+  }
+  return searches;
+}
+
+function freshnessToDate(freshness?: string): string | undefined {
+  const daysMap: Record<string, number> = { week: 7, month: 30, year: 365 };
+  const days = freshness ? daysMap[freshness] : undefined;
+  if (!days) return undefined;
+  return new Date(Date.now() - days * 86_400_000).toISOString();
+}
+
+function extractQueryWords(searches: string[]): string[] {
+  const words = new Set<string>();
+  for (const s of searches) {
+    for (const w of s.toLowerCase().split(/\W+/)) {
+      if (w.length > 2) words.add(w);
+    }
+  }
+  return [...words];
+}
+
+function scoreExploreCandidate(
+  candidate: { title: string; channelTitle: string; publishedAt?: string; durationSec?: number; views?: number },
+  queryWords: string[],
+  creator?: string,
+): number {
+  let score = 0;
+  const hasCreator = Boolean(creator);
+
+  // Title relevance (0-1)
+  const titleWords = new Set(candidate.title.toLowerCase().split(/\W+/).filter((w) => w.length > 2));
+  const titleOverlap = queryWords.length > 0
+    ? queryWords.filter((w) => titleWords.has(w)).length / queryWords.length
+    : 0;
+
+  // Creator match (0-1)
+  let creatorScore = 0;
+  if (creator) {
+    const cn = creator.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const ch = candidate.channelTitle.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (ch === cn || ch.includes(cn) || cn.includes(ch)) creatorScore = 1;
+  }
+
+  // Freshness (0-1) — decay over 90 days
+  let freshnessScore = 0.5;
+  if (candidate.publishedAt) {
+    const ageMs = Date.now() - new Date(candidate.publishedAt).getTime();
+    const ageDays = Math.max(0, ageMs / 86_400_000);
+    freshnessScore = Math.max(0, 1 - ageDays / 90);
+  }
+
+  // View velocity (0-1) — views per day, normalized loosely
+  let velocityScore = 0;
+  if (candidate.views && candidate.publishedAt) {
+    const ageDays = Math.max(1, (Date.now() - new Date(candidate.publishedAt).getTime()) / 86_400_000);
+    const vpd = candidate.views / ageDays;
+    velocityScore = Math.min(1, vpd / 10_000); // 10k views/day = max score
+  }
+
+  // Duration fit (0-1) — penalize very short (<2min) and very long (>2h)
+  let durationFit = 1;
+  if (candidate.durationSec != null) {
+    if (candidate.durationSec < 120) durationFit = 0.3;
+    else if (candidate.durationSec > 7200) durationFit = 0.5;
+  }
+
+  if (hasCreator) {
+    score = creatorScore * 0.35 + titleOverlap * 0.25 + freshnessScore * 0.20 + velocityScore * 0.10 + durationFit * 0.10;
+  } else {
+    score = titleOverlap * 0.40 + freshnessScore * 0.25 + velocityScore * 0.15 + durationFit * 0.10 + 0.10; // transcript availability bonus (assumed)
+  }
+
+  return score;
+}
+
+function diverseSelect<T extends { candidate: { channelTitle: string }; score: number }>(
+  scored: T[],
+  maxResults: number,
+): T[] {
+  const result: T[] = [];
+  const channelCounts = new Map<string, number>();
+
+  for (const item of scored) {
+    if (result.length >= maxResults) break;
+    const ch = item.candidate.channelTitle.toLowerCase();
+    const count = channelCounts.get(ch) ?? 0;
+    if (count >= 2) continue;
+    channelCounts.set(ch, count + 1);
+    result.push(item);
+  }
+
+  return result;
+}
+
+function buildExploreReason(
+  candidate: { title: string; channelTitle: string; publishedAt?: string; views?: number },
+  score: number,
+  creator?: string,
+  freshness?: string,
+): string {
+  const parts: string[] = [];
+
+  if (creator) {
+    const cn = creator.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const ch = candidate.channelTitle.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (ch === cn || ch.includes(cn) || cn.includes(ch)) {
+      parts.push(`channel "${candidate.channelTitle}" matches creator constraint`);
+    }
+  }
+
+  if (candidate.publishedAt) {
+    const ageDays = Math.max(0, (Date.now() - new Date(candidate.publishedAt).getTime()) / 86_400_000);
+    if (ageDays < 1) parts.push("published today");
+    else if (ageDays < 7) parts.push(`published ${Math.round(ageDays)} day${ageDays >= 1.5 ? "s" : ""} ago`);
+    else if (ageDays < 30) parts.push(`published ${Math.round(ageDays / 7)} week${ageDays >= 10.5 ? "s" : ""} ago`);
+  }
+
+  if (candidate.views != null && candidate.views > 0) {
+    parts.push(`${formatViewCount(candidate.views)} views`);
+  }
+
+  parts.push(`relevance score ${(score * 100).toFixed(0)}%`);
+
+  return parts.join(", ") + ".";
+}
+
+function formatViewCount(views: number): string {
+  if (views >= 1_000_000) return `${(views / 1_000_000).toFixed(1)}M`;
+  if (views >= 1_000) return `${(views / 1_000).toFixed(0)}K`;
+  return String(views);
+}
+
+type ExploreResult = ExploreYouTubeOutput["results"][number];
+
+function buildExploreHints(
+  results: ExploreResult[],
+  background?: ExploreYouTubeOutput["backgroundEnrichment"],
+): string[] {
+  const hints: string[] = [];
+
+  // Specific hints from key moments
+  for (const r of results.slice(0, 3)) {
+    if (r.keyMoments && r.keyMoments.length > 0) {
+      const moment = r.keyMoments.find((m) => m.label.length > 10) ?? r.keyMoments[0];
+      hints.push(
+        `"${r.video.title}" covers "${moment.label}" at ${formatTimestamp(moment.timestampSec)} — you can ask about this topic.`,
+      );
+    }
+  }
+
+  // Background enrichment hints
+  if (background) {
+    if (background.assetsBeingPrepared.includes("transcript_search")) {
+      hints.push("Transcript search is being prepared in the background — use searchTranscripts for follow-up questions.");
+    }
+    if (background.assetsBeingPrepared.includes("visual_search")) {
+      hints.push("Visual search is being prepared — use searchVisualContent to find specific frames, charts, or slides.");
+    }
+  }
+
+  // Multi-result hints
+  if (results.length > 1) {
+    const channels = [...new Set(results.map((r) => r.video.channelTitle))];
+    if (channels.length > 1) {
+      hints.push(`Results span ${channels.length} creators — you can compare their perspectives.`);
+    }
+  }
+
+  return hints;
+}
+
+function buildExploreLimitations(mode: string, depth: string, candidateCount: number): string[] {
+  const limitations: string[] = [];
+  if (candidateCount < 5) {
+    limitations.push("Fewer than 5 candidates found — results may not fully represent available content.");
+  }
+  if (depth === "quick") {
+    limitations.push("Quick depth: metadata only, no transcript analysis. Use 'standard' or 'deep' for richer results.");
+  }
+  if (mode === "explore") {
+    limitations.push("Explore mode ranks by diversity and relevance — not every top result will be the absolute best match.");
+  }
+  return limitations;
 }

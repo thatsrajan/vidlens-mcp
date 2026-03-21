@@ -49,6 +49,8 @@ test("public MCP surface uses intent-based tool names", () => {
     "setActiveCommentCollection",
     "clearActiveCommentCollection",
     "removeCommentCollection",
+    // Explore
+    "exploreYouTube",
   ]);
 });
 

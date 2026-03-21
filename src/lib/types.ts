@@ -1033,6 +1033,61 @@ export interface ExploreNicheCompetitorsOutput {
 }
 
 /* ────────────────────────────────────────────────────────────────
+ * Explore module
+ * ──────────────────────────────────────────────────────────────── */
+
+export interface ExploreYouTubeInput extends TokenControls {
+  /** Single natural-language query — tool constructs 2-3 search variations. */
+  query?: string;
+  /** Pre-constructed search queries (1-5). Takes precedence over query. */
+  searches?: string[];
+  mode?: "specific" | "explore";
+  /** Channel name or handle — hard constraint for ranking. */
+  creator?: string;
+  freshness?: "any" | "week" | "month" | "year";
+  /** Free text describing the user's role — passed through for client framing. */
+  persona?: string;
+  maxResults?: number;
+  depth?: "quick" | "standard" | "deep";
+  selectionStrategy?: "best_match" | "diverse_set";
+  prepareVisualSearch?: boolean;
+  prepareTranscriptSearch?: boolean;
+}
+
+export interface ExploreYouTubeOutput {
+  mode: "specific" | "explore";
+  persona?: string;
+  totalCandidatesEvaluated: number;
+  results: Array<{
+    rank: number;
+    selectionReason: string;
+    video: {
+      videoId: string;
+      title: string;
+      channelTitle: string;
+      publishedAt?: string;
+      durationSec?: number;
+      views?: number;
+      likes?: number;
+    };
+    keyMoments?: Array<{
+      timestampSec: number;
+      label: string;
+    }>;
+    transcriptSearchReady: boolean;
+    visualSearchReady: boolean;
+  }>;
+  followUpHints: string[];
+  backgroundEnrichment?: {
+    status: "preparing";
+    videosQueued: string[];
+    assetsBeingPrepared: string[];
+  };
+  limitations: string[];
+  provenance: Provenance;
+}
+
+/* ────────────────────────────────────────────────────────────────
  * Media / Asset types (V-next: local media storage)
  * ──────────────────────────────────────────────────────────────── */
 

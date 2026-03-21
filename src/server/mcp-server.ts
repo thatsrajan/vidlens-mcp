@@ -657,6 +657,29 @@ export const tools: Tool[] = [
       additionalProperties: false,
     },
   },
+  // ── Explore module ──────────────────────────────────────────────
+  {
+    name: "exploreYouTube",
+    description: "Explore YouTube with intelligent multi-query search, ranking, and parallel enrichment. Accepts search queries with optional creator, freshness, and persona constraints. Returns ranked videos with selection reasons, key moments, and readiness flags for transcript/visual follow-up. Use 'specific' mode to find one best video. Use 'explore' mode for topic discovery across multiple creators. Depth controls enrichment: 'quick' for metadata only, 'standard' for key moments, 'deep' for background transcript and visual indexing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Natural-language search query. Tool constructs 2-3 search variations. Provide this OR 'searches'." },
+        searches: { type: "array", items: { type: "string" }, description: "1-5 pre-constructed search queries. Takes precedence over 'query'. Use for precise multi-angle searches." },
+        mode: { type: "string", enum: ["specific", "explore"], description: "specific = find one best video, explore = discover multiple. Auto-detected from maxResults if omitted." },
+        creator: { type: "string", description: "Channel name or handle — hard constraint for ranking (e.g. 'MKBHD', '@mkbhd')" },
+        freshness: { type: "string", enum: ["any", "week", "month", "year"], description: "Time window for results. Default: any." },
+        persona: { type: "string", description: "User's role or context (e.g. 'builder', 'marketer', 'PM'). Passed through for response framing." },
+        maxResults: { type: "number", minimum: 1, maximum: 15, description: "Default: 1 for specific, 8 for explore" },
+        depth: { type: "string", enum: ["quick", "standard", "deep"], description: "quick = metadata only, standard = + key moments, deep = + background transcript/visual indexing. Default: standard." },
+        selectionStrategy: { type: "string", enum: ["best_match", "diverse_set"], description: "best_match = top scores, diverse_set = spread across creators. Default: best_match for specific, diverse_set for explore." },
+        prepareVisualSearch: { type: "boolean", description: "Fire background visual indexing for the top result. Default: false." },
+        prepareTranscriptSearch: { type: "boolean", description: "Fire background transcript import for selected videos. Default: true for deep, false otherwise." },
+        dryRun: { type: "boolean" },
+      },
+      additionalProperties: false,
+    },
+  },
 ];
 
 export function createYouTubeMcpServer(service = new YouTubeService()): Server {
@@ -1327,6 +1350,24 @@ async function executeTool(
           videoIdOrUrl: optionalString(args, "videoIdOrUrl"),
           maxResults: optionalNumber(args, "maxResults"),
           minSimilarity: optionalNumber(args, "minSimilarity"),
+        },
+        { dryRun },
+      );
+
+    case "exploreYouTube":
+      return service.exploreYouTube(
+        {
+          query: optionalString(args, "query"),
+          searches: optionalStringArray(args, "searches"),
+          mode: optionalEnum(args, "mode", ["specific", "explore"]),
+          creator: optionalString(args, "creator"),
+          freshness: optionalEnum(args, "freshness", ["any", "week", "month", "year"]),
+          persona: optionalString(args, "persona"),
+          maxResults: optionalNumber(args, "maxResults"),
+          depth: optionalEnum(args, "depth", ["quick", "standard", "deep"]),
+          selectionStrategy: optionalEnum(args, "selectionStrategy", ["best_match", "diverse_set"]),
+          prepareVisualSearch: optionalBoolean(args, "prepareVisualSearch"),
+          prepareTranscriptSearch: optionalBoolean(args, "prepareTranscriptSearch"),
         },
         { dryRun },
       );
