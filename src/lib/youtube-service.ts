@@ -1657,6 +1657,8 @@ export class YouTubeService {
         embeddingModel: result.embeddingModel,
         queryMode: result.queryMode,
       },
+      coveredTimeRange: result.coveredTimeRange,
+      needsExpansion: result.needsExpansion,
       limitations: result.limitations,
       provenance: this.makeProvenance("none", result.descriptionProvider === "none" && result.embeddingProvider === "none", [
         "Search ran over the visual frame index, not transcript embeddings.",
@@ -3150,6 +3152,8 @@ export class YouTubeService {
         embeddingModel: process.env.YOUTUBE_MCP_GEMINI_MODEL || "gemini-embedding-2-preview",
         queryMode: "gemini_semantic_plus_lexical",
       },
+      coveredTimeRange: { startSec: 0, endSec: 120 },
+      needsExpansion: false,
       limitations: [
         "Dry-run sample only. Real mode returns actual local frame paths as evidence.",
       ],

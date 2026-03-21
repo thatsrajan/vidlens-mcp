@@ -5,3 +5,4 @@ dist
 *.log
 *.orig
 *conflicted copy*
+documents/

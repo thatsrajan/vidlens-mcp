@@ -6,7 +6,7 @@
  * - Does NOT do visual search, visual embeddings, or frame classification
  * - Provides raw frame files that can be used by external vision models
  */
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { execa } from "execa";
 import { MediaStore, type MediaAsset } from "./media-store.js";
@@ -91,57 +91,16 @@ export class ThumbnailExtractor {
       this.store.listAssetsForVideo(options.videoId).map((a) => [a.filePath, a]),
     );
 
-    const plannedOutputs = timestamps.map((_, index) =>
-      join(framesDir, `${options.videoId}_${String(index + 1).padStart(4, "0")}.${imageFormat}`),
-    );
-    const existingAssets = plannedOutputs.map((filePath) =>
-      existsSync(filePath) ? (existingByPath.get(filePath) ?? null) : null,
-    );
-
-    if (existingAssets.every((asset): asset is MediaAsset => asset !== null)) {
-      return {
-        videoId: options.videoId,
-        framesExtracted: existingAssets.length,
-        assets: existingAssets,
-        durationMs: Date.now() - startMs,
-      };
-    }
-
-    const hasPartialExistingAssets = existingAssets.some((asset) => asset !== null);
-    const derivedDimensions = deriveOutputDimensions(videoProbe.width, videoProbe.height, width);
-
-    let assets: MediaAsset[];
-    if (hasPartialExistingAssets) {
-      assets = await this.extractFramesIndividually({
-        videoId: options.videoId,
-        videoPath,
-        timestamps,
-        plannedOutputs,
-        width,
-        existingByPath,
-      });
-    } else {
-      try {
-        await this.extractFramesSinglePass(videoPath, framesDir, options.videoId, imageFormat, intervalSec, width);
-        assets = this.registerExtractedFrames({
-          videoId: options.videoId,
-          timestamps,
-          plannedOutputs,
-          existingByPath,
-          frameWidth: derivedDimensions?.width,
-          frameHeight: derivedDimensions?.height,
-        });
-      } catch {
-        assets = await this.extractFramesIndividually({
-          videoId: options.videoId,
-          videoPath,
-          timestamps,
-          plannedOutputs,
-          width,
-          existingByPath,
-        });
-      }
-    }
+    // Extract frames using seek-based approach (fast — seeks directly to each timestamp)
+    const assets = await this.extractFrames({
+      videoId: options.videoId,
+      videoPath,
+      timestamps,
+      framesDir,
+      imageFormat,
+      width,
+      existingByPath,
+    });
 
     return {
       videoId: options.videoId,
@@ -201,30 +160,12 @@ export class ThumbnailExtractor {
     }
   }
 
-  private async extractFramesSinglePass(
-    videoPath: string,
-    framesDir: string,
-    videoId: string,
-    imageFormat: "jpg" | "png" | "webp",
-    intervalSec: number,
-    width: number,
-  ): Promise<void> {
-    const outputPattern = join(framesDir, `${videoId}_%04d.${imageFormat}`);
-    await execa(this.ffmpegBinary, [
-      "-i", videoPath,
-      "-vf", `fps=1/${intervalSec},scale=${width}:-1`,
-      "-q:v", "2",
-      "-vsync", "vfr",
-      "-y",
-      outputPattern,
-    ], { timeout: 120_000, reject: true });
-  }
-
-  private async extractFramesIndividually(params: {
+  private async extractFrames(params: {
     videoId: string;
     videoPath: string;
     timestamps: number[];
-    plannedOutputs: string[];
+    framesDir: string;
+    imageFormat: string;
     width: number;
     existingByPath: Map<string, MediaAsset>;
   }): Promise<MediaAsset[]> {
@@ -233,7 +174,12 @@ export class ThumbnailExtractor {
     const results = await poolMap(
       params.timestamps,
       async (timestamp, index) => {
-        const outFile = params.plannedOutputs[index];
+        const outFile = join(
+          params.framesDir,
+          `${params.videoId}_${String(index).padStart(4, "0")}_${Math.round(timestamp)}s.${params.imageFormat}`,
+        );
+
+        // Skip if already extracted and registered
         if (existsSync(outFile)) {
           const existing = params.existingByPath.get(outFile);
           if (existing) return existing;
@@ -272,64 +218,6 @@ export class ThumbnailExtractor {
 
     return results.filter((asset): asset is MediaAsset => asset !== null);
   }
-
-  private registerExtractedFrames(params: {
-    videoId: string;
-    timestamps: number[];
-    plannedOutputs: string[];
-    existingByPath: Map<string, MediaAsset>;
-    frameWidth?: number;
-    frameHeight?: number;
-  }): MediaAsset[] {
-    const extractedFiles = new Set(
-      params.plannedOutputs.filter((filePath) => existsSync(filePath)),
-    );
-    if (extractedFiles.size === 0) {
-      const filesOnDisk = new Set(
-        readdirSync(join(this.store.videoDir(params.videoId), "keyframes"))
-          .filter((name) => name.startsWith(`${params.videoId}_`))
-          .map((name) => join(this.store.videoDir(params.videoId), "keyframes", name)),
-      );
-      for (const filePath of params.plannedOutputs) {
-        if (filesOnDisk.has(filePath)) {
-          extractedFiles.add(filePath);
-        }
-      }
-    }
-
-    const assets: MediaAsset[] = [];
-    params.plannedOutputs.forEach((filePath, index) => {
-      if (!extractedFiles.has(filePath)) {
-        return;
-      }
-      const existing = params.existingByPath.get(filePath);
-      if (existing) {
-        assets.push(existing);
-        return;
-      }
-      assets.push(this.store.registerAsset({
-        videoId: params.videoId,
-        kind: "keyframe",
-        filePath,
-        timestampSec: params.timestamps[index],
-        width: params.frameWidth,
-        height: params.frameHeight,
-      }));
-    });
-    return assets;
-  }
-}
-
-function deriveOutputDimensions(sourceWidth: number | undefined, sourceHeight: number | undefined, requestedWidth: number): {
-  width: number;
-  height: number;
-} | null {
-  if (!sourceWidth || !sourceHeight || sourceWidth <= 0 || sourceHeight <= 0) {
-    return null;
-  }
-  const width = Math.min(requestedWidth, sourceWidth);
-  const height = Math.max(1, Math.round(sourceHeight * (width / sourceWidth)));
-  return { width, height };
 }
 
 /** Run `fn` over `items` with at most `concurrency` in-flight at once, preserving order. */

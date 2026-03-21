@@ -107,6 +107,8 @@ export interface SearchVisualContentResult {
   embeddingProvider: "none" | "gemini" | "mixed";
   embeddingModel?: string;
   queryMode: "ocr_description_lexical" | "gemini_semantic_plus_lexical";
+  coveredTimeRange?: { startSec: number; endSec: number };
+  needsExpansion?: boolean;
   limitations: string[];
 }
 
@@ -351,6 +353,14 @@ export class VisualIndexStore {
     return row.count;
   }
 
+  getFrameTimeRange(videoId: string): { count: number; minSec: number; maxSec: number } | null {
+    const row = this.db.prepare(
+      "SELECT COUNT(*) AS count, MIN(timestamp_sec) AS min_sec, MAX(timestamp_sec) AS max_sec FROM visual_frames WHERE video_id = ?",
+    ).get(videoId) as { count: number; min_sec: number | null; max_sec: number | null } | undefined;
+    if (!row || row.count === 0 || row.min_sec === null || row.max_sec === null) return null;
+    return { count: row.count, minSec: row.min_sec, maxSec: row.max_sec };
+  }
+
   removeFramesForVideo(videoId: string): number {
     const count = this.countFrames(videoId);
     this.db.prepare("DELETE FROM visual_frames WHERE video_id = ?").run(videoId);
@@ -401,7 +411,7 @@ export class VisualSearchEngine {
     if (!videoAssetPath && (params.autoDownload ?? true)) {
       const download = await this.mediaDownloader.download({
         videoIdOrUrl: videoId,
-        format: params.downloadFormat ?? "best_video",
+        format: params.downloadFormat ?? "worst_video",
       });
       videoAssetPath = download.asset.filePath;
       autoDownloaded = true;
@@ -524,7 +534,7 @@ export class VisualSearchEngine {
       throw new Error("query cannot be empty");
     }
 
-    if (params.videoId && (params.autoIndexIfNeeded ?? true) && this.store.countFrames(params.videoId) === 0) {
+    if (params.videoId && (params.autoIndexIfNeeded ?? true) && this.needsIndexing(params.videoId)) {
       await this.indexVideo({
         videoId: params.videoId,
         ...(params.indexIfNeeded ?? {}),
@@ -562,6 +572,22 @@ export class VisualSearchEngine {
       .sort((a, b) => b.score - a.score || b.semanticScore! - a.semanticScore! || b.lexicalScore - a.lexicalScore)
       .slice(0, clamp(params.maxResults ?? 5, 1, 20));
 
+    // Compute coverage hints when scoped to a single video
+    let coveredTimeRange: { startSec: number; endSec: number } | undefined;
+    let needsExpansion: boolean | undefined;
+    if (params.videoId) {
+      const range = this.store.getFrameTimeRange(params.videoId);
+      if (range) {
+        coveredTimeRange = { startSec: range.minSec, endSec: range.maxSec };
+        const videoAsset = this.findVideoAsset(params.videoId);
+        const videoDuration = videoAsset?.durationSec;
+        if (videoDuration && videoDuration > 0) {
+          const coverage = (range.maxSec - range.minSec) / videoDuration;
+          needsExpansion = coverage < 0.5;
+        }
+      }
+    }
+
     return {
       query: rawQuery ?? normalizedQuery,
       results,
@@ -571,6 +597,8 @@ export class VisualSearchEngine {
       embeddingProvider: embeddingSummary.provider,
       embeddingModel: embeddingSummary.model,
       queryMode: semanticQueryEmbedding ? "gemini_semantic_plus_lexical" : "ocr_description_lexical",
+      coveredTimeRange,
+      needsExpansion,
       limitations: buildSearchLimitations(summarizeDescriptionProvider(frames), embeddingSummary.provider),
     };
   }
@@ -622,6 +650,24 @@ export class VisualSearchEngine {
         "Similarity search does not understand transcript text. It only compares visual frame features.",
       ],
     };
+  }
+
+  private needsIndexing(videoId: string): boolean {
+    const range = this.store.getFrameTimeRange(videoId);
+    if (!range) return true; // no frames at all
+
+    const videoAsset = this.findVideoAsset(videoId);
+    const videoDuration = videoAsset?.durationSec;
+
+    if (!videoDuration || videoDuration <= 0) {
+      // Can't determine coverage without duration; trust existing frames
+      return false;
+    }
+
+    // Coverage = span of indexed frames / video duration
+    const coveredSpan = range.maxSec - range.minSec;
+    const coverage = coveredSpan / videoDuration;
+    return coverage < 0.5;
   }
 
   private findVideoAsset(videoId: string): MediaAsset | undefined {

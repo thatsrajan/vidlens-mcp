@@ -1232,6 +1232,8 @@ export interface SearchVisualContentOutput {
     embeddingModel?: string;
     queryMode: "ocr_description_lexical" | "gemini_semantic_plus_lexical";
   };
+  coveredTimeRange?: { startSec: number; endSec: number };
+  needsExpansion?: boolean;
   limitations: string[];
   provenance: Provenance;
 }

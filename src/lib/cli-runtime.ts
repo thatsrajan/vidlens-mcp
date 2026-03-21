@@ -1,10 +1,8 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { homedir } from "node:os";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { startStdioServer } from "../server/mcp-server.js";
-import { printBanner } from "./banner.js";
 import {
   detectKnownClients,
   keyTransparencySummary,
@@ -14,7 +12,7 @@ import {
   type ClientDetectionSummary,
   type KnownClientId,
 } from "./install-diagnostics.js";
-import { YouTubeService } from "./youtube-service.js";
+import type { YouTubeService } from "./youtube-service.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -53,7 +51,7 @@ export interface ParsedCliArgs {
 
 export interface CliDeps {
   startServer: () => Promise<void>;
-  createService: () => YouTubeService;
+  createService: () => YouTubeService | Promise<YouTubeService>;
   packageMeta: ReturnType<typeof readPackageMetadata>;
   detectClients: () => ClientDetectionSummary[];
   writeStdout: (text: string) => void;
@@ -81,7 +79,7 @@ export async function runCli(args: string[], deps: Partial<CliDeps> = {}): Promi
 
   switch (parsed.command) {
     case "serve":
-      printBanner();
+      suppressExperimentalWarnings();
       await resolvedDeps.startServer();
       return 0;
     case "version":
@@ -256,7 +254,13 @@ export function buildServerEntry(options: {
     env.GOOGLE_API_KEY = options.googleApiKey;
   }
 
+  // Prefer global install binary over npx to avoid npm resolution on every startup.
+  // npx runs a full registry check each time, adding 1-30s of latency.
   if (options.useNpx) {
+    const globalBin = findGlobalBinary(options.packageName ?? "vidlens-mcp");
+    if (globalBin) {
+      return { command: globalBin, args: ["serve"], env };
+    }
     return {
       command: "npx",
       args: ["-y", options.packageName ?? "vidlens-mcp", "serve"],
@@ -378,8 +382,14 @@ function createCliDeps(overrides: Partial<CliDeps>): CliDeps {
   const env = overrides.env ?? process.env;
   const cliPath = overrides.cliPath ?? fileURLToPath(new URL("../cli.js", import.meta.url));
   return {
-    startServer: overrides.startServer ?? (() => startStdioServer()),
-    createService: overrides.createService ?? (() => new YouTubeService()),
+    startServer: overrides.startServer ?? (async () => {
+      const { startStdioServer } = await import("../server/mcp-server.js");
+      return startStdioServer();
+    }),
+    createService: overrides.createService ?? (async () => {
+      const { YouTubeService } = await import("./youtube-service.js");
+      return new YouTubeService();
+    }),
     packageMeta: overrides.packageMeta ?? readPackageMetadata(),
     detectClients: overrides.detectClients ?? (() => detectKnownClients()),
     writeStdout: overrides.writeStdout ?? ((text) => process.stdout.write(text)),
@@ -396,7 +406,7 @@ function createCliDeps(overrides: Partial<CliDeps>): CliDeps {
 }
 
 async function renderDoctorReport(parsed: ParsedCliArgs, deps: CliDeps): Promise<string> {
-  const service = deps.createService();
+  const service = await deps.createService();
   const health = await service.checkSystemHealth({ runLiveChecks: !parsed.noLive });
   const clients = deps.detectClients();
   const claudeDesktop = clients.find((client) => client.clientId === "claude_desktop");
@@ -796,6 +806,34 @@ function isNpxInvocation(env: NodeJS.ProcessEnv, cliPath: string): boolean {
   if (env.npm_command === "exec") return true;
   if (cliPath.includes("/_npx/")) return true;
   return false;
+}
+
+/** Try to find a globally-installed binary for the given package name. */
+function findGlobalBinary(packageName: string): string | null {
+  const candidates = [
+    join(homedir(), ".npm-global", "bin", packageName),
+    `/usr/local/bin/${packageName}`,
+    `/opt/homebrew/bin/${packageName}`,
+  ];
+  // Also check npm global prefix from env
+  const npmPrefix = process.env.npm_config_prefix;
+  if (npmPrefix) {
+    candidates.unshift(join(npmPrefix, "bin", packageName));
+  }
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+/** Suppress the node:sqlite ExperimentalWarning in MCP serve mode (stderr noise). */
+function suppressExperimentalWarnings(): void {
+  const orig = process.emitWarning;
+  process.emitWarning = ((warning: string | Error, nameOrOptions?: string | { type?: string }, ...rest: unknown[]) => {
+    const name = typeof nameOrOptions === "string" ? nameOrOptions : nameOrOptions?.type;
+    if (name === "ExperimentalWarning") return;
+    return (orig as Function).call(process, warning, nameOrOptions, ...rest);
+  }) as typeof process.emitWarning;
 }
 
 function defaultPromptLine(question: string): Promise<string> {
