@@ -2385,7 +2385,8 @@ export class YouTubeService {
     const topVideoIds = selected.map((s) => s.candidate.videoId);
 
     const shouldPrepareTranscripts = input.prepareTranscriptSearch ?? (depth === "standard" || depth === "deep");
-    if (shouldPrepareTranscripts || input.prepareVisualSearch) {
+    const shouldPrepareVisual = input.prepareVisualSearch ?? (depth !== "quick" && topVideoIds.length > 0);
+    if (shouldPrepareTranscripts || shouldPrepareVisual) {
       const assetsBeingPrepared: string[] = [];
 
       if (shouldPrepareTranscripts) {
@@ -2397,8 +2398,9 @@ export class YouTubeService {
         ).catch(() => {});
       }
 
-      if (input.prepareVisualSearch && topVideoIds.length > 0) {
+      if (shouldPrepareVisual) {
         assetsBeingPrepared.push("visual_search");
+        // Only index the top result — downloading + extracting is expensive
         void this.indexVisualContent(
           { videoIdOrUrl: topVideoIds[0], autoDownload: true, downloadFormat: "worst_video" },
           options,
