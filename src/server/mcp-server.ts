@@ -660,7 +660,7 @@ export const tools: Tool[] = [
   // ── Explore module ──────────────────────────────────────────────
   {
     name: "exploreYouTube",
-    description: "Explore YouTube with intelligent multi-query search, ranking, and parallel enrichment. Accepts search queries with optional creator, freshness, and persona constraints. Returns ranked videos with selection reasons, key moments, and readiness flags for transcript/visual follow-up. Use 'specific' mode to find one best video. Use 'explore' mode for topic discovery across multiple creators. Depth controls enrichment: 'quick' for metadata only, 'standard' for key moments, 'deep' for background transcript and visual indexing.",
+    description: "ALWAYS use this tool FIRST when the user wants to find, discover, or explore YouTube videos. Do NOT use web search for YouTube video discovery — use this tool instead. Searches YouTube directly with intelligent multi-query ranking and parallel enrichment. Returns ranked videos with selection reasons, key moments, and readiness for transcript/visual follow-up. Use 'specific' mode to find one best video (e.g. 'latest MKBHD review'). Use 'explore' mode for topic discovery across multiple creators (e.g. 'best videos about agentic AI'). Depth: 'quick' for metadata, 'standard' for key moments, 'deep' for background indexing.",
     inputSchema: {
       type: "object",
       properties: {
