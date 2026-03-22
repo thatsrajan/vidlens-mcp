@@ -95,6 +95,17 @@ export async function runCli(args: string[], deps: Partial<CliDeps> = {}): Promi
     YouTube intelligence layer for AI agents
     41 tools · zero config
 `);
+      const detectedClients = resolvedDeps.detectClients();
+      const desktopDetected = detectedClients.some(c => c.clientId === "claude_desktop" && c.detected);
+      const codeDetected = detectedClients.some(c => c.clientId === "claude_code" && c.detected);
+      if (!desktopDetected) {
+        resolvedDeps.writeStderr("  \x1b[33m\u26a0\x1b[0m Claude Desktop not detected\n");
+        resolvedDeps.writeStderr("    Install: brew install --cask claude\n\n");
+      }
+      if (!codeDetected) {
+        resolvedDeps.writeStderr("  \x1b[33m\u26a0\x1b[0m Claude Code not detected\n");
+        resolvedDeps.writeStderr("    Install: npm install -g @anthropic-ai/claude-code\n\n");
+      }
       const hasYoutubeKey = Boolean(parsed.youtubeApiKey || resolvedDeps.env.YOUTUBE_API_KEY);
       const hasGeminiKey = Boolean(parsed.geminiApiKey || resolvedDeps.env.GEMINI_API_KEY || parsed.googleApiKey || resolvedDeps.env.GOOGLE_API_KEY);
       if (!hasYoutubeKey || !hasGeminiKey) {

@@ -14,41 +14,50 @@
 
 ## 🔍 What is VidLens?
 
-VidLens is a [Model Context Protocol](https://modelcontextprotocol.io/) server that gives AI agents deep, reliable access to YouTube. Not just transcripts - full intelligence: sentiment analysis, trend discovery, semantic search, media assets, creator analytics, and image-backed visual search.
+**Stop watching 10 videos to answer one question.** VidLens searches YouTube, reads the transcripts, and synthesizes what creators actually said — across multiple videos, with timestamps, benchmark charts, and sources.
+
+VidLens is a [Model Context Protocol](https://modelcontextprotocol.io/) server that gives AI agents deep, reliable access to YouTube. Not just transcripts — full intelligence: search, analysis, visual search, and auto-generated comparison charts.
 
 **No API key required to start.** Every tool has a three-tier fallback chain (YouTube API → yt-dlp → page extraction) so nothing breaks when quota runs out or keys aren't configured.
-Heavy subsystems are lazy-loaded, repeat read paths are cached, and the visual pipeline is optimized to reduce user-visible wait time.
+
+### Try it — paste any of these into Claude:
+
+> **"I'm thinking about buying the M5 Max MacBook Pro.**
+> **Search YouTube for top tech reviewers and tell me what they're saying. Is it worth the upgrade from M3/M4?"**
+>
+> *VidLens finds 10+ reviews, reads the transcripts, extracts benchmark scores, and presents comparison charts — all from one prompt.*
+
+> **"I want to understand how AI agents work.**
+> **Search YouTube for the best videos for a beginner and summarize what I need to know."**
+>
+> *Discovers videos across creators, ranks by learning value, and prepares transcripts for follow-up questions.*
+
+> **"Search YouTube for reviews comparing the iPhone 16 Pro vs Samsung S25 Ultra.**
+> **What do reviewers agree on? Where do they disagree?"**
+>
+> *Searches, reads transcripts from multiple reviewers, and synthesizes consensus vs disagreements with sources.*
 
 ---
 
 ## 🎯 Core Capabilities
 
+### 🔍 Explore — One Prompt, Full Pipeline
+Ask a question about YouTube and VidLens does the rest: searches, ranks by creator match and freshness, reads transcripts, extracts benchmark data, and presents comparison charts automatically. Works for product research, learning, competitive analysis — anything on YouTube.
+
 ### 🔎 Semantic Search Across Playlists
 Import entire playlists or video sets, index every transcript with Gemini embeddings, and search across hundreds of hours of content by meaning — not just keywords.
 
-> *"Find every mention of gradient descent across 50 Stanford CS lectures"*
->
-> *"What did the instructor say about backpropagation in any of these videos?"*
-
 ### 👁️ Visual Search — See What's In Videos
-Extract keyframes, describe them with Gemini Vision, run OCR on slides and whiteboards, and search by what you **see** — not just what's said. Three layers: Apple Vision feature prints for image similarity, Gemini frame descriptions for scene understanding, and semantic embeddings for text→visual search.
-
-> *"Find the frame where he draws the system architecture diagram"*
->
-> *"Show me every slide that mentions 'transformer architecture'"*
+Extract keyframes, describe them with Gemini Vision, run OCR on slides and whiteboards, and search by what you **see** — not just what's said.
 
 ### 📊 Intelligence Layer — Not Just Data
-Sentiment analysis with themes and risk signals. Niche trend discovery with momentum and saturation scoring. Content gap detection. Hook pattern analysis. Upload timing recommendations. The LLM does the thinking — VidLens gives it the right data.
-
-> *"What's the audience sentiment on this video? Any risk signals?"*
->
-> *"What's trending in the AI coding niche right now?"*
+Sentiment analysis, niche trend discovery, content gap detection, hook pattern analysis, upload timing recommendations. The LLM does the thinking — VidLens gives it the right data.
 
 ### ⚡ Zero Config, Always Works
-No API key needed to start. Three-tier fallback chain on every tool: YouTube API → yt-dlp → page extraction. Nothing breaks when quota runs out. Keys are optional power-ups, not requirements.
+No API key needed to start. Three-tier fallback chain on every tool. Nothing breaks when quota runs out. Keys are optional power-ups.
 
 ### 🎬 Full Media Pipeline
-Download videos/audio/thumbnails. Extract keyframes. Index comments for semantic search. Build a local knowledge base from any YouTube content — all through natural language.
+Download videos/audio/thumbnails. Extract keyframes. Index comments for semantic search. Build a local knowledge base from any YouTube content.
 
 ---
 
@@ -111,21 +120,28 @@ Fully quit and reopen Claude Desktop (⌘Q). Claude Code picks up changes automa
 
 ### 4. Try it
 
-> "Import this playlist and search across all videos for mentions of machine learning"
+Start with "Search YouTube" to activate VidLens:
+
+> "Search YouTube for the top M5 Max MacBook Pro reviews and tell me if it's worth upgrading from M4."
 >
-> "Search this video's visuals for the whiteboard architecture diagram and show me the frame evidence"
+> "Search YouTube for the best videos about agentic AI for a beginner."
+>
+> "Import this playlist and search across all videos for mentions of machine learning."
+>
+> "Search this video's frames for the benchmark comparison chart."
 >
 > "What's trending in the AI coding niche right now?"
->
-> "Build a complete dossier for this video — metadata, transcript, sentiment, hooks, everything"
->
-> "What's the audience sentiment on this video? Any risk signals?"
->
-> "Get the transcript of this video: https://youtube.com/watch?v=dQw4w9WgXcQ"
 
 ---
 
-## 🧰 Tools - 41 across 9 modules
+## 🧰 Tools - 41 across 10 modules
+
+### 🔍 Explore - YouTube Discovery & Research
+*The front door — one prompt, full pipeline*
+
+| Tool | What it does |
+|---|---|
+| `exploreYouTube` | Intent-aware search with multi-query ranking, parallel enrichment, transcript summaries, structured benchmark data, and background indexing. One call replaces 5-8 individual tool calls. |
 
 ### 📺 Core - Video & Channel Intelligence
 *Always available, no API key needed*
@@ -272,6 +288,30 @@ npx vidlens-mcp doctor --no-live
 ```
 
 Checks: Node.js version, yt-dlp availability, API key validation, data directory health, MCP client registration (Claude Desktop, Claude Code).
+
+---
+
+## 📱 Works Everywhere — Desktop, Cowork, Phone
+
+VidLens works across the full Claude ecosystem. Set it up once, use it everywhere.
+
+### Claude Desktop — Chat
+The classic experience. Ask a question, get charts and analysis inline. Best for interactive research sessions.
+
+### Claude Desktop — Cowork Projects *(March 2026)*
+Create a persistent research project with VidLens connected. Claude remembers context across sessions — last week's competitive research informs this week's analysis. Set up scheduled tasks that run automatically:
+
+> *"Every Monday, search YouTube for new AI agent framework videos and compare to last week's findings."*
+
+### Claude Dispatch — From Your Phone *(March 2026)*
+Trigger any VidLens research from the Claude mobile app. Ask from your phone, Claude Desktop runs the tools locally, results come back to your pocket:
+
+> *"Run my competitive research project — what new M5 Max content dropped this weekend?"*
+
+### Claude Code — Remote Control
+Start a Claude Code session with `claude --remote-control`, then continue from any browser or your phone at `claude.ai/code`. Full tool access, full context.
+
+> **Note:** Your Mac must be awake with Claude Desktop open for Cowork, Dispatch, and scheduled tasks to execute.
 
 ---
 
