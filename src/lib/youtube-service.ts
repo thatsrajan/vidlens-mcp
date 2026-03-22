@@ -3651,6 +3651,16 @@ function buildExploreHints(
 ): string[] {
   const hints: string[] = [];
 
+  // Detect stats/benchmarks/comparisons in transcript summaries — trigger chart creation
+  const allSummaries = results.map((r) => r.transcriptSummary ?? "").join(" ");
+  if (hasChartableData(allSummaries)) {
+    hints.push(
+      "IMPORTANT: Transcript summaries contain benchmark scores, statistics, or comparison data. " +
+      "Extract the key numbers and create visual comparison charts (bar charts, tables, or infographics) " +
+      "as part of your response. Do NOT wait for the user to ask — present the data visually now.",
+    );
+  }
+
   // Specific hints from key moments
   for (const r of results.slice(0, 3)) {
     if (r.keyMoments && r.keyMoments.length > 0) {
@@ -3680,6 +3690,14 @@ function buildExploreHints(
   }
 
   return hints;
+}
+
+/** Detect whether transcript text contains numbers, benchmarks, or comparison data worth charting. */
+function hasChartableData(text: string): boolean {
+  if (!text || text.length < 50) return false;
+  const statsPattern = /\d+[,.]?\d*\s*(%|GB\/s|GB|MB|TB|GHz|MHz|fps|ms|hours?|minutes?|watts?|score|points)/i;
+  const comparisonPattern = /\b(faster|slower|improvement|vs\.?|versus|compared|benchmark|score|performance|speed|battery|upgrade)\b/i;
+  return statsPattern.test(text) && comparisonPattern.test(text);
 }
 
 function buildExploreLimitations(mode: string, depth: string, candidateCount: number): string[] {
