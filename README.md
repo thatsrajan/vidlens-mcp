@@ -32,7 +32,7 @@ VidLens is a [Model Context Protocol](https://modelcontextprotocol.io/) server t
 >
 > *Discovers videos across creators, ranks by learning value, and prepares transcripts for follow-up questions.*
 
-> **"Search YouTube for reviews comparing the iPhone 16 Pro vs Samsung S25 Ultra.**
+> **"Search YouTube for reviews comparing the iPhone 17 Pro vs Samsung S26 Ultra.**
 > **What do reviewers agree on? Where do they disagree?"**
 >
 > *Searches, reads transcripts from multiple reviewers, and synthesizes consensus vs disagreements with sources.*
