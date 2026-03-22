@@ -2423,6 +2423,10 @@ export class YouTubeService {
       }
     }
 
+    // Extract structured benchmark data from transcript summaries
+    const allSummaryText = enriched.map((r) => r.transcriptSummary ?? "").join(" ");
+    const benchmarkData = extractBenchmarkData(allSummaryText, enriched);
+
     // Follow-up hints
     const followUpHints = buildExploreHints(enriched, backgroundEnrichment);
 
@@ -2434,6 +2438,7 @@ export class YouTubeService {
       persona: input.persona,
       totalCandidatesEvaluated: candidates.length,
       results: enriched,
+      benchmarkData,
       followUpHints,
       backgroundEnrichment,
       limitations: buildExploreLimitations(mode, depth, candidates.length),
@@ -3712,4 +3717,87 @@ function buildExploreLimitations(mode: string, depth: string, candidateCount: nu
     limitations.push("Explore mode ranks by diversity and relevance — not every top result will be the absolute best match.");
   }
   return limitations;
+}
+
+/** Extract structured benchmark numbers from transcript text for chart rendering. */
+function extractBenchmarkData(
+  text: string,
+  results: ExploreYouTubeOutput["results"],
+): ExploreYouTubeOutput["benchmarkData"] {
+  if (!text || text.length < 50 || !hasChartableData(text)) return undefined;
+
+  const metrics: Array<{ label: string; unit?: string; values: Record<string, number> }> = [];
+
+  // Common benchmark patterns: "X scored/got/achieved N in/on BenchmarkName"
+  // Also: "BenchmarkName: N" or "BenchmarkName score of N" or "N points in BenchmarkName"
+  const patterns = [
+    // "4,278 in Geekbench single-core" or "Geekbench single-core: 4,278"
+    /(\d[\d,]*\.?\d*)\s*(?:points?\s+)?(?:in|on|for)\s+([A-Z][A-Za-z0-9\s\-]+?)(?:\s*[:,]|\s*\.|$)/g,
+    // "Geekbench 6 single-core: 4,278" or "Cinebench 2026 multi: 8,711"
+    /([A-Z][A-Za-z0-9\s\-]+?)\s*[:=]\s*(\d[\d,]*\.?\d*)\s*(points?|score|GB\/s|GHz|fps|hours?|watts?|%)?/g,
+    // "scored 4,278" near a benchmark name
+    /(?:scored|achieved|hit|reached|got)\s+(\d[\d,]*\.?\d*)\s*(points?|score)?\s+(?:in|on)\s+([A-Za-z0-9\s\-]+)/gi,
+  ];
+
+  const found = new Map<string, number>();
+
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+      // Determine which capture group has the label vs the number
+      const parts = match.slice(1).filter(Boolean);
+      let label: string | undefined;
+      let value: number | undefined;
+      let unit: string | undefined;
+
+      for (const part of parts) {
+        const cleaned = part.replace(/,/g, "");
+        const num = parseFloat(cleaned);
+        if (!Number.isNaN(num) && num > 0 && cleaned.match(/^\d/)) {
+          value = num;
+        } else if (part.match(/^(points?|score|GB\/s|GHz|fps|hours?|watts?|%)$/i)) {
+          unit = part;
+        } else if (part.length > 2 && part.length < 50) {
+          label = part.trim();
+        }
+      }
+
+      if (label && value != null && !found.has(label)) {
+        found.set(label, value);
+      }
+    }
+  }
+
+  // Build metrics from found values, trying to group by benchmark name
+  for (const [label, value] of found) {
+    // Try to find which video/product this value is associated with
+    const productName = detectProductInContext(text, label, results);
+    const existing = metrics.find((m) => m.label === label);
+    if (existing && productName) {
+      existing.values[productName] = value;
+    } else {
+      metrics.push({
+        label,
+        values: { [productName ?? "Value"]: value },
+      });
+    }
+  }
+
+  if (metrics.length === 0) return undefined;
+
+  // Determine a title from the search context
+  const productTerms = results.slice(0, 3).map((r) => r.video.title).join(" ");
+  const titleMatch = productTerms.match(/(M\d+\s*(?:Max|Pro|Ultra)?|iPhone\s*\d+|Galaxy\s*S\d+|RTX\s*\d+)/i);
+  const title = titleMatch ? `${titleMatch[1]} Benchmark Comparison` : "Benchmark Comparison";
+
+  return { title, metrics: metrics.slice(0, 10) };
+}
+
+function detectProductInContext(text: string, label: string, results: ExploreYouTubeOutput["results"]): string | undefined {
+  // Look for product names near the benchmark mention
+  const idx = text.toLowerCase().indexOf(label.toLowerCase());
+  if (idx < 0) return undefined;
+  const window = text.slice(Math.max(0, idx - 100), idx + label.length + 100);
+  const products = window.match(/M\d+\s*(?:Max|Pro|Ultra)?|M\d+|iPhone\s*\d+\s*(?:Pro)?|RTX\s*\d+|RX\s*\d+/gi);
+  return products?.[0] ?? results[0]?.video.title.slice(0, 30);
 }
