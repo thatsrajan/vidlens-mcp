@@ -1079,6 +1079,15 @@ export interface ExploreYouTubeOutput {
     transcriptSearchReady: boolean;
     visualSearchReady: boolean;
   }>;
+  /** Structured benchmark/comparison data extracted from transcripts — render as charts in any client. */
+  benchmarkData?: {
+    title: string;
+    metrics: Array<{
+      label: string;
+      unit?: string;
+      values: Record<string, number>;
+    }>;
+  };
   followUpHints: string[];
   backgroundEnrichment?: {
     status: "preparing";
