@@ -1074,6 +1074,8 @@ export interface ExploreYouTubeOutput {
       timestampSec: number;
       label: string;
     }>;
+    /** Concatenated key-moment summaries — gives Claude the substance without follow-up readTranscript calls. */
+    transcriptSummary?: string;
     transcriptSearchReady: boolean;
     visualSearchReady: boolean;
   }>;

@@ -2342,6 +2342,8 @@ export class YouTubeService {
           // Use basic metadata from search
         }
 
+        let transcriptSummary: string | undefined;
+
         if (depth !== "quick" && transcriptAvailable) {
           try {
             const transcript = await this.readTranscript(
@@ -2349,13 +2351,17 @@ export class YouTubeService {
               options,
             );
             const segments = transcript.transcript.segments ?? [];
-            keyMoments = segments
-              .filter((s) => s.topicLabel || s.text)
-              .slice(0, 8)
-              .map((s) => ({
-                timestampSec: s.tStartSec,
-                label: (s.topicLabel ?? s.text).slice(0, 100),
-              }));
+            const filtered = segments.filter((s) => s.topicLabel || s.text).slice(0, 8);
+            keyMoments = filtered.map((s) => ({
+              timestampSec: s.tStartSec,
+              label: (s.topicLabel ?? s.text).slice(0, 100),
+            }));
+            // Include the actual transcript content so Claude doesn't need follow-up readTranscript calls
+            transcriptSummary = filtered
+              .map((s) => s.text)
+              .filter(Boolean)
+              .join(" ")
+              .slice(0, 1200) || undefined;
           } catch {
             // Transcript unavailable — not an error
           }
@@ -2374,6 +2380,7 @@ export class YouTubeService {
             likes,
           },
           keyMoments: keyMoments?.length ? keyMoments : undefined,
+          transcriptSummary,
           transcriptSearchReady: false,
           visualSearchReady: false,
         };
