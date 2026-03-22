@@ -2384,10 +2384,11 @@ export class YouTubeService {
     let backgroundEnrichment: ExploreYouTubeOutput["backgroundEnrichment"];
     const topVideoIds = selected.map((s) => s.candidate.videoId);
 
-    if (depth === "deep" || input.prepareTranscriptSearch || input.prepareVisualSearch) {
+    const shouldPrepareTranscripts = input.prepareTranscriptSearch ?? (depth === "standard" || depth === "deep");
+    if (shouldPrepareTranscripts || input.prepareVisualSearch) {
       const assetsBeingPrepared: string[] = [];
 
-      if (depth === "deep" || input.prepareTranscriptSearch) {
+      if (shouldPrepareTranscripts) {
         assetsBeingPrepared.push("transcript_search");
         const collectionId = `explore-${topVideoIds[0]}`;
         void this.importVideos(
