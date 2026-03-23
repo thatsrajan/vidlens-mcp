@@ -8,7 +8,7 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { YouTubeService } from "../lib/youtube-service.js";
-import { findYtDlpBinary } from "../lib/ytdlp-installer.js";
+import { findYtDlpBinary, managedBinaryPath, downloadYtDlp } from "../lib/ytdlp-installer.js";
 import { resolveDefaultDataDir } from "../lib/install-diagnostics.js";
 import { homedir } from "node:os";
 import { MediaStore } from "../lib/media-store.js";
@@ -804,7 +804,22 @@ export async function startStdioServer(service?: YouTubeService): Promise<void> 
   if (!service) {
     const dataDir = process.env.VIDLENS_DATA_DIR || resolveDefaultDataDir(homedir(), process.platform);
     const resolved = findYtDlpBinary(dataDir, process.platform, process.arch, process.env);
-    service = new YouTubeService({ ytDlpBinary: resolved?.path, dataDir });
+    let ytDlpBinary = resolved?.path;
+
+    if (!resolved) {
+      // Point at the managed path now — the binary will appear there once the download finishes.
+      ytDlpBinary = managedBinaryPath(dataDir, process.platform);
+      // Download in the background so the server starts instantly.
+      // Tool calls that arrive before the download finishes gracefully fall back
+      // to other tiers or fail with a retry hint. Subsequent calls just work.
+      downloadYtDlp(dataDir, process.platform, process.arch)
+        .then((p) => process.stderr.write(`[vidlens-mcp] yt-dlp ready: ${p}\n`))
+        .catch((err) => process.stderr.write(
+          `[vidlens-mcp] yt-dlp auto-download failed: ${err instanceof Error ? err.message : String(err)}. Run "npx vidlens-mcp setup" to retry.\n`,
+        ));
+    }
+
+    service = new YouTubeService({ ytDlpBinary, dataDir });
   }
   const server = createYouTubeMcpServer(service);
   const transport = new StdioServerTransport();
