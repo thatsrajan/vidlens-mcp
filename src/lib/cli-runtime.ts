@@ -448,7 +448,12 @@ function createCliDeps(overrides: Partial<CliDeps>): CliDeps {
     }),
     createService: overrides.createService ?? (async () => {
       const { YouTubeService } = await import("./youtube-service.js");
-      return new YouTubeService();
+      const { findYtDlpBinary: findBinary } = await import("./ytdlp-installer.js");
+      const h = overrides.homeDir ?? homedir();
+      const p = overrides.platform ?? process.platform;
+      const dataDir = env.VIDLENS_DATA_DIR || resolveDefaultDataDir(h, p);
+      const resolved = findBinary(dataDir, p, process.arch, env);
+      return new YouTubeService({ ytDlpBinary: resolved?.path, dataDir });
     }),
     packageMeta: overrides.packageMeta ?? readPackageMetadata(),
     detectClients: overrides.detectClients ?? (() => detectKnownClients()),
