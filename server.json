@@ -6,12 +6,12 @@
     "url": "https://github.com/rajanrengasamy/vidlens-mcp",
     "source": "github"
   },
-  "version": "1.2.4",
+  "version": "1.2.6",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "vidlens-mcp",
-      "version": "1.2.4",
+      "version": "1.2.6",
       "transport": {
         "type": "stdio"
       },
