@@ -1,0 +1,36 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.rajanrengasamy/vidlens-mcp",
+  "description": "YouTube intelligence layer for AI agents. 41 tools, 10 modules, zero config.",
+  "repository": {
+    "url": "https://github.com/rajanrengasamy/vidlens-mcp",
+    "source": "github"
+  },
+  "version": "1.2.2",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "vidlens-mcp",
+      "version": "1.2.2",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "description": "YouTube Data API v3 key (optional — works without it via fallback scraping)",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": true,
+          "name": "YOUTUBE_API_KEY"
+        },
+        {
+          "description": "Google Gemini API key for AI-powered visual descriptions (optional)",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": true,
+          "name": "GEMINI_API_KEY"
+        }
+      ]
+    }
+  ]
+}
