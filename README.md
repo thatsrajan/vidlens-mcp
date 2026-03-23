@@ -84,7 +84,7 @@ Download videos/audio/thumbnails. Extract keyframes. Index comments for semantic
 npx vidlens-mcp setup
 ```
 
-This auto-detects your MCP clients (Claude Desktop, Claude Code) and configures both.
+This auto-detects your MCP clients (Claude Desktop, Claude Code), downloads **yt-dlp** if needed, and configures everything. No manual setup required.
 
 ### 2. Or configure manually
 
@@ -363,7 +363,7 @@ One directory. Portable. Back it up by copying. Delete it to start fresh.
 | Requirement | Status | Notes |
 |---|---|---|
 | **Node.js ≥ 22** | Required | Uses `node:sqlite` — `node --version` to check |
-| **yt-dlp** | Recommended | `brew install yt-dlp` - enables zero-config mode |
+| **yt-dlp** | Auto-installed | Downloaded automatically during `npx vidlens-mcp setup` |
 | **ffmpeg** | Optional | Needed for frame extraction and visual indexing |
 | **YouTube API key** | Optional | Unlocks comments, better metadata |
 | **Gemini API key** | Optional | Upgrades transcript embeddings and frame descriptions for visual search |

@@ -275,7 +275,7 @@ function pathExists(path?: string): boolean {
   return Boolean(path && existsSync(path));
 }
 
-function commandOnPath(command: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string | undefined {
+export function commandOnPath(command: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string | undefined {
   const pathValue = env.PATH;
   if (!pathValue) {
     return undefined;

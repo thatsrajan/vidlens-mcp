@@ -8,6 +8,9 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { YouTubeService } from "../lib/youtube-service.js";
+import { findYtDlpBinary } from "../lib/ytdlp-installer.js";
+import { resolveDefaultDataDir } from "../lib/install-diagnostics.js";
+import { homedir } from "node:os";
 import { MediaStore } from "../lib/media-store.js";
 import { MediaDownloader } from "../lib/media-downloader.js";
 import { ThumbnailExtractor } from "../lib/thumbnail-extractor.js";
@@ -797,7 +800,12 @@ export function createYouTubeMcpServer(service = new YouTubeService()): Server {
   return server;
 }
 
-export async function startStdioServer(service = new YouTubeService()): Promise<void> {
+export async function startStdioServer(service?: YouTubeService): Promise<void> {
+  if (!service) {
+    const dataDir = process.env.VIDLENS_DATA_DIR || resolveDefaultDataDir(homedir(), process.platform);
+    const resolved = findYtDlpBinary(dataDir, process.platform, process.arch, process.env);
+    service = new YouTubeService({ ytDlpBinary: resolved?.path, dataDir });
+  }
   const server = createYouTubeMcpServer(service);
   const transport = new StdioServerTransport();
   await server.connect(transport);

@@ -106,6 +106,32 @@ export async function runCli(args: string[], deps: Partial<CliDeps> = {}): Promi
         resolvedDeps.writeStderr("  \x1b[33m\u26a0\x1b[0m Claude Code not detected\n");
         resolvedDeps.writeStderr("    Install: npm install -g @anthropic-ai/claude-code\n\n");
       }
+      // ── yt-dlp check ──
+      const dataDir = parsed.dataDir ?? resolvedDeps.env.VIDLENS_DATA_DIR ?? resolveDefaultDataDir(resolvedDeps.homeDir, resolvedDeps.platform);
+      const { findYtDlpBinary, downloadYtDlp } = await import("./ytdlp-installer.js");
+      const ytdlpResolved = findYtDlpBinary(dataDir, resolvedDeps.platform, process.arch, resolvedDeps.env);
+      if (ytdlpResolved) {
+        resolvedDeps.writeStderr(`  \x1b[32m✓\x1b[0m yt-dlp found (${ytdlpResolved.source})\n\n`);
+      } else {
+        resolvedDeps.writeStderr("  \x1b[33m⚠\x1b[0m yt-dlp not found\n");
+        resolvedDeps.writeStderr("    yt-dlp is a free, open-source tool that lets VidLens read YouTube\n");
+        resolvedDeps.writeStderr("    videos — transcripts, search results, metadata — without needing\n");
+        resolvedDeps.writeStderr("    any API keys. Without it, most tools won't work.\n");
+        resolvedDeps.writeStderr("    \x1b[2mhttps://github.com/yt-dlp/yt-dlp\x1b[0m\n\n");
+        const answer = await resolvedDeps.promptLine("    Download it now? (Y/n): ");
+        if (!answer || answer.trim().toLowerCase() !== "n") {
+          resolvedDeps.writeStderr("    Downloading yt-dlp...\n");
+          try {
+            const binPath = await downloadYtDlp(dataDir, resolvedDeps.platform, process.arch);
+            resolvedDeps.writeStderr(`    \x1b[32m✓\x1b[0m Saved to ${binPath}\n`);
+          } catch (err) {
+            resolvedDeps.writeStderr(`    \x1b[31m✗\x1b[0m Download failed: ${err instanceof Error ? err.message : String(err)}\n`);
+            resolvedDeps.writeStderr("    Install manually: https://github.com/yt-dlp/yt-dlp#installation\n");
+          }
+        }
+        resolvedDeps.writeStderr("\n");
+      }
+
       const hasYoutubeKey = Boolean(parsed.youtubeApiKey || resolvedDeps.env.YOUTUBE_API_KEY);
       const hasGeminiKey = Boolean(parsed.geminiApiKey || resolvedDeps.env.GEMINI_API_KEY || parsed.googleApiKey || resolvedDeps.env.GOOGLE_API_KEY);
       if (!hasYoutubeKey || !hasGeminiKey) {

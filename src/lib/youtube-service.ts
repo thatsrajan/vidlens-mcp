@@ -908,7 +908,7 @@ export class YouTubeService {
         status: "error",
         detail,
       });
-      suggestions.push("Install yt-dlp and make sure GUI-launched apps can see it via PATH.");
+      suggestions.push("Run `npx vidlens-mcp setup` to auto-download yt-dlp, or visit https://github.com/yt-dlp/yt-dlp#installation");
       return {
         videoId,
         title,
@@ -1125,10 +1125,12 @@ export class YouTubeService {
 
     try {
       const probe = await this.ytdlp.probe();
+      const binaryPath = this.ytdlp.getBinary();
+      const source = binaryPath !== "yt-dlp" ? "managed" : "system PATH";
       checks.push({
         name: "yt_dlp",
         status: "ok",
-        detail: `${probe.binary} available (${probe.version}).`,
+        detail: `${probe.binary} available (${probe.version}, ${source}).`,
       });
     } catch (error) {
       checks.push({
@@ -1136,7 +1138,7 @@ export class YouTubeService {
         status: "error",
         detail: toMessage(error),
       });
-      suggestions.push("Install yt-dlp and expose it in PATH for your MCP client runtime.");
+      suggestions.push("Run `npx vidlens-mcp setup` to auto-download yt-dlp, or visit https://github.com/yt-dlp/yt-dlp#installation");
     }
 
     if (youtubeApiConfigured) {
