@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://youtu.be/mpEUOt0ol5c">
+  <a href="https://youtu.be/0BqrMKWIXkg">
     <img src="https://img.shields.io/badge/▶%20Watch%20the%2060s%20demo-FF0000?style=for-the-badge&logo=youtube&logoColor=white" alt="Watch the 60s demo" />
   </a>
 </p>
