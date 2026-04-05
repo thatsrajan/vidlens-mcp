@@ -1,17 +1,17 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.rajanrengasamy/vidlens-mcp",
-  "description": "YouTube intelligence layer for AI agents. 41 tools, 10 modules, zero config.",
+  "name": "io.github.thatsrajan/vidlens-mcp",
+  "description": "YouTube as a queryable database for AI agents. 41 tools, zero config.",
   "repository": {
-    "url": "https://github.com/rajanrengasamy/vidlens-mcp",
+    "url": "https://github.com/thatsrajan/vidlens-mcp",
     "source": "github"
   },
-  "version": "1.2.6",
+  "version": "1.2.7",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "vidlens-mcp",
-      "version": "1.2.6",
+      "version": "1.2.7",
       "transport": {
         "type": "stdio"
       },
