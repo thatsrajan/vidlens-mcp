@@ -16,11 +16,12 @@ import { MediaDownloader } from "../lib/media-downloader.js";
 import { ThumbnailExtractor } from "../lib/thumbnail-extractor.js";
 import { parseVideoId } from "../lib/id-parsing.js";
 import { generateVisualReport, openInBrowser, type VisualReportFrame } from "../lib/visual-report.js";
+import { Telemetry } from "../lib/telemetry.js";
 
 export const tools: Tool[] = [
   {
     name: "findVideos",
-    description: "Search YouTube videos by intent. Returns compact ranked results with provenance and engagement hints.",
+    description: "Search YouTube videos by intent. Returns compact ranked results with provenance and engagement hints. [~1-3s]",
     inputSchema: {
       type: "object",
       properties: {
@@ -40,7 +41,7 @@ export const tools: Tool[] = [
   },
   {
     name: "inspectVideo",
-    description: "Inspect a single video with compact metadata, normalized ratios, and transcript availability.",
+    description: "Inspect a single video with compact metadata, normalized ratios, and transcript availability. [~1-3s]",
     inputSchema: {
       type: "object",
       properties: {
@@ -55,7 +56,7 @@ export const tools: Tool[] = [
   },
   {
     name: "inspectChannel",
-    description: "Inspect a channel with summary stats and posting cadence heuristics.",
+    description: "Inspect a channel with summary stats and posting cadence heuristics. [~3-10s]",
     inputSchema: {
       type: "object",
       properties: {
@@ -68,7 +69,7 @@ export const tools: Tool[] = [
   },
   {
     name: "listChannelCatalog",
-    description: "List a channel's recent catalog in compact creator-analysis shape.",
+    description: "List a channel's recent catalog in compact creator-analysis shape. [~3-10s]",
     inputSchema: {
       type: "object",
       properties: {
@@ -86,7 +87,7 @@ export const tools: Tool[] = [
   },
   {
     name: "readTranscript",
-    description: "Read transcript in summary, key moments, chapters, or paginated full mode with long-video safeguards.",
+    description: "Read transcript in summary, key moments, chapters, or paginated full mode with long-video safeguards. [~1-3s]",
     inputSchema: {
       type: "object",
       properties: {
@@ -105,7 +106,7 @@ export const tools: Tool[] = [
   },
   {
     name: "readComments",
-    description: "Read top-level comments with optional replies and structured provenance.",
+    description: "Read top-level comments with optional replies and structured provenance. [~1-3s]",
     inputSchema: {
       type: "object",
       properties: {
@@ -123,7 +124,7 @@ export const tools: Tool[] = [
   },
   {
     name: "measureAudienceSentiment",
-    description: "Heuristic audience sentiment analysis from comments with themes, risk signals, and quote samples.",
+    description: "Heuristic audience sentiment analysis from comments with themes, risk signals, and quote samples. [~3-10s]",
     inputSchema: {
       type: "object",
       properties: {
@@ -139,7 +140,7 @@ export const tools: Tool[] = [
   },
   {
     name: "analyzeVideoSet",
-    description: "Run multiple analyses across a video set with partial success, item-level errors, and provenance.",
+    description: "Run multiple analyses across a video set with partial success, item-level errors, and provenance. [~5-20s, scales with video count]",
     inputSchema: {
       type: "object",
       properties: {
@@ -159,7 +160,7 @@ export const tools: Tool[] = [
   },
   {
     name: "expandPlaylist",
-    description: "Expand a playlist into individual videos for downstream analysis and batch workflows.",
+    description: "Expand a playlist into individual videos for downstream analysis and batch workflows. [~1-3s]",
     inputSchema: {
       type: "object",
       properties: {
@@ -174,7 +175,7 @@ export const tools: Tool[] = [
   },
   {
     name: "analyzePlaylist",
-    description: "Expand and analyze a playlist in one call with partial success and aggregate benchmarks.",
+    description: "Expand and analyze a playlist in one call with partial success and aggregate benchmarks. [~5-20s, scales with playlist size]",
     inputSchema: {
       type: "object",
       properties: {
@@ -195,7 +196,7 @@ export const tools: Tool[] = [
   },
   {
     name: "importPlaylist",
-    description: "Import a playlist into the local transcript knowledge base for semantic search in Claude Desktop.",
+    description: "Import a playlist into the local transcript knowledge base for semantic search in Claude Desktop. [~5-30s, ~2s per video]",
     inputSchema: {
       type: "object",
       properties: {
@@ -220,7 +221,7 @@ export const tools: Tool[] = [
   },
   {
     name: "importVideos",
-    description: "Import one or more videos into a local transcript collection for later semantic search.",
+    description: "Import one or more videos into a local transcript collection for later semantic search. [~5-20s, ~2s per video]",
     inputSchema: {
       type: "object",
       properties: {
@@ -244,7 +245,7 @@ export const tools: Tool[] = [
   },
   {
     name: "searchTranscripts",
-    description: "Search imported transcript-text collections with active-collection focus by default and return ranked timestamped chunks.",
+    description: "Search imported transcript-text collections with active-collection focus by default and return ranked timestamped chunks. [~instant]",
     inputSchema: {
       type: "object",
       properties: {
@@ -261,7 +262,7 @@ export const tools: Tool[] = [
   },
   {
     name: "listCollections",
-    description: "List local transcript collections, active search focus, and indexed video/chunk counts.",
+    description: "List local transcript collections, active search focus, and indexed video/chunk counts. [~instant]",
     inputSchema: {
       type: "object",
       properties: {
@@ -272,7 +273,7 @@ export const tools: Tool[] = [
   },
   {
     name: "setActiveCollection",
-    description: "Set the default collection that transcript search should focus on when collectionId is omitted.",
+    description: "Set the default collection that transcript search should focus on when collectionId is omitted. [~instant]",
     inputSchema: {
       type: "object",
       properties: {
@@ -284,7 +285,7 @@ export const tools: Tool[] = [
   },
   {
     name: "clearActiveCollection",
-    description: "Clear the active collection so transcript search fans back out across all collections.",
+    description: "Clear the active collection so transcript search fans back out across all collections. [~instant]",
     inputSchema: {
       type: "object",
       properties: {},
@@ -293,7 +294,7 @@ export const tools: Tool[] = [
   },
   {
     name: "checkImportReadiness",
-    description: "Diagnose whether a video is importable, including transcript availability, sparse-transcript warnings, and yt-dlp/API issues.",
+    description: "Diagnose whether a video is importable, including transcript availability, sparse-transcript warnings, and yt-dlp/API issues. [~1-3s]",
     inputSchema: {
       type: "object",
       properties: {
@@ -307,7 +308,7 @@ export const tools: Tool[] = [
   },
   {
     name: "buildVideoDossier",
-    description: "Build a one-shot video dossier with core metadata/transcript readiness, optionally extended with comments, sentiment, and provenance.",
+    description: "Build a one-shot video dossier with core metadata/transcript readiness, optionally extended with comments, sentiment, and provenance. [~3-10s]",
     inputSchema: {
       type: "object",
       properties: {
@@ -324,7 +325,7 @@ export const tools: Tool[] = [
   },
   {
     name: "checkSystemHealth",
-    description: "Check setup and provider health: yt-dlp, YouTube API, Gemini embeddings, and local storage.",
+    description: "Check setup and provider health: yt-dlp, YouTube API, Gemini embeddings, and local storage. [~3-10s]",
     inputSchema: {
       type: "object",
       properties: {
@@ -336,7 +337,7 @@ export const tools: Tool[] = [
   },
   {
     name: "removeCollection",
-    description: "Delete a local transcript collection and its search index.",
+    description: "Delete a local transcript collection and its search index. [~instant]",
     inputSchema: {
       type: "object",
       properties: {
@@ -348,7 +349,7 @@ export const tools: Tool[] = [
   },
   {
     name: "scoreHookPatterns",
-    description: "Heuristically score first-30-second hooks across one or more videos.",
+    description: "Heuristically score first-30-second hooks across one or more videos. [~3-10s, ~1s per video]",
     inputSchema: {
       type: "object",
       properties: {
@@ -362,7 +363,7 @@ export const tools: Tool[] = [
   },
   {
     name: "researchTagsAndTitles",
-    description: "Research title structures, keywords, and tag patterns around a seed topic.",
+    description: "Research title structures, keywords, and tag patterns around a seed topic. [~3-10s]",
     inputSchema: {
       type: "object",
       properties: {
@@ -378,7 +379,7 @@ export const tools: Tool[] = [
   },
   {
     name: "compareShortsVsLong",
-    description: "Compare recent Shorts vs long-form performance for a channel and suggest a format mix.",
+    description: "Compare recent Shorts vs long-form performance for a channel and suggest a format mix. [~3-10s]",
     inputSchema: {
       type: "object",
       properties: {
@@ -392,7 +393,7 @@ export const tools: Tool[] = [
   },
   {
     name: "recommendUploadWindows",
-    description: "Recommend upload windows from recent publishing history for a given timezone.",
+    description: "Recommend upload windows from recent publishing history for a given timezone. [~3-10s]",
     inputSchema: {
       type: "object",
       properties: {
@@ -408,7 +409,7 @@ export const tools: Tool[] = [
   {
     name: "discoverNicheTrends",
     description:
-      "Discover what's trending in a niche right now. Returns top-performing and recent videos, momentum signals (accelerating/steady/decelerating), saturation analysis, content gap opportunities, keyword patterns, and format breakdown. Grounded in YouTube search data with honest limitations disclosed.",
+      "Discover what's trending in a niche right now. Returns top-performing and recent videos, momentum signals (accelerating/steady/decelerating), saturation analysis, content gap opportunities, keyword patterns, and format breakdown. Grounded in YouTube search data with honest limitations disclosed. [~5-15s]",
     inputSchema: {
       type: "object",
       properties: {
@@ -428,7 +429,7 @@ export const tools: Tool[] = [
   {
     name: "exploreNicheCompetitors",
     description:
-      "Discover active channels in a niche by analyzing who ranks in YouTube search results. Returns channel-level stats, top videos, and a landscape summary. Useful for competitive reconnaissance before entering a niche.",
+      "Discover active channels in a niche by analyzing who ranks in YouTube search results. Returns channel-level stats, top videos, and a landscape summary. Useful for competitive reconnaissance before entering a niche. [~5-20s]",
     inputSchema: {
       type: "object",
       properties: {
@@ -447,7 +448,7 @@ export const tools: Tool[] = [
   // ── Media / Asset tools ──────────────────────────────────────
   {
     name: "downloadAsset",
-    description: "Download a YouTube video, audio track, or thumbnail to local storage. Returns asset manifest entry with file path. Does NOT perform visual indexing — this is honest file storage.",
+    description: "Download a YouTube video, audio track, or thumbnail to local storage. Returns asset manifest entry with file path. Does NOT perform visual indexing — this is honest file storage. [~30-120s, downloads media]",
     inputSchema: {
       type: "object",
       properties: {
@@ -465,7 +466,7 @@ export const tools: Tool[] = [
   },
   {
     name: "listMediaAssets",
-    description: "List locally stored media assets. Filter by video or kind. Shows file paths, sizes, and manifest metadata.",
+    description: "List locally stored media assets. Filter by video or kind. Shows file paths, sizes, and manifest metadata. [~instant]",
     inputSchema: {
       type: "object",
       properties: {
@@ -478,7 +479,7 @@ export const tools: Tool[] = [
   },
   {
     name: "removeMediaAsset",
-    description: "Remove stored media assets. Specify assetId to remove one, or videoIdOrUrl to remove all assets for a video.",
+    description: "Remove stored media assets. Specify assetId to remove one, or videoIdOrUrl to remove all assets for a video. [~instant]",
     inputSchema: {
       type: "object",
       properties: {
@@ -491,7 +492,7 @@ export const tools: Tool[] = [
   },
   {
     name: "extractKeyframes",
-    description: "Extract keyframe images from a locally downloaded video at regular intervals using ffmpeg. Requires the video to be downloaded first via downloadAsset. Does NOT do visual search or classification — produces raw frame images.",
+    description: "Extract keyframe images from a locally downloaded video at regular intervals using ffmpeg. Requires the video to be downloaded first via downloadAsset. Does NOT do visual search or classification — produces raw frame images. [~30-60s, requires ffmpeg]",
     inputSchema: {
       type: "object",
       properties: {
@@ -507,7 +508,7 @@ export const tools: Tool[] = [
   },
   {
     name: "mediaStoreHealth",
-    description: "Check health of the local media store: disk usage, asset counts, ffmpeg/yt-dlp availability.",
+    description: "Check health of the local media store: disk usage, asset counts, ffmpeg/yt-dlp availability. [~instant]",
     inputSchema: {
       type: "object",
       properties: {},
@@ -517,7 +518,7 @@ export const tools: Tool[] = [
   // ── Visual Search tools ──────────────────────────────────
   {
     name: "indexVisualContent",
-    description: "Build a real visual index for a video using extracted frames, Apple Vision OCR, Apple Vision feature prints, and optional Gemini frame descriptions. Returns frame evidence with local image paths.",
+    description: "Build a real visual index for a video using extracted frames, Apple Vision OCR, Apple Vision feature prints, and optional Gemini frame descriptions. Returns frame evidence with local image paths. [~30-120s, downloads + OCR + vision]",
     inputSchema: {
       type: "object",
       properties: {
@@ -539,7 +540,7 @@ export const tools: Tool[] = [
   },
   {
     name: "searchVisualContent",
-    description: "Search the actual visual content of a video or your indexed frame library. Uses Apple Vision OCR, optional Gemini frame descriptions, and optional Gemini semantic embeddings. Always returns frame/image evidence with timestamps.",
+    description: "Search the actual visual content of a video or your indexed frame library. Uses Apple Vision OCR, optional Gemini frame descriptions, and optional Gemini semantic embeddings. Always returns frame/image evidence with timestamps. [~1-3s if indexed, ~60-120s if auto-indexing]",
     inputSchema: {
       type: "object",
       properties: {
@@ -564,7 +565,7 @@ export const tools: Tool[] = [
   },
   {
     name: "findSimilarFrames",
-    description: "Find frames that visually look like a reference frame using Apple Vision image feature prints. Accepts a frame assetId or a direct framePath and returns image-backed matches.",
+    description: "Find frames that visually look like a reference frame using Apple Vision image feature prints. Accepts a frame assetId or a direct framePath and returns image-backed matches. [~30-60s, vision comparison]",
     inputSchema: {
       type: "object",
       properties: {
@@ -581,7 +582,7 @@ export const tools: Tool[] = [
   // ── Comment Knowledge Base Tools ──
   {
     name: "importComments",
-    description: "Import a video's comments into the local comment knowledge base for semantic search. Fetches comments via the existing comment pipeline and indexes them for searchComments.",
+    description: "Import a video's comments into the local comment knowledge base for semantic search. Fetches comments via the existing comment pipeline and indexes them for searchComments. [~3-10s]",
     inputSchema: {
       type: "object",
       properties: {
@@ -601,7 +602,7 @@ export const tools: Tool[] = [
   },
   {
     name: "searchComments",
-    description: "Search imported comment collections with ranked results. Returns matching comments with author, like count, and relevance score. Uses active comment collection by default.",
+    description: "Search imported comment collections with ranked results. Returns matching comments with author, like count, and relevance score. Uses active comment collection by default. [~instant]",
     inputSchema: {
       type: "object",
       properties: {
@@ -618,7 +619,7 @@ export const tools: Tool[] = [
   },
   {
     name: "listCommentCollections",
-    description: "List local comment collections, active search focus, and indexed comment counts.",
+    description: "List local comment collections, active search focus, and indexed comment counts. [~instant]",
     inputSchema: {
       type: "object",
       properties: {
@@ -629,7 +630,7 @@ export const tools: Tool[] = [
   },
   {
     name: "setActiveCommentCollection",
-    description: "Set the default comment collection that searchComments should focus on when collectionId is omitted.",
+    description: "Set the default comment collection that searchComments should focus on when collectionId is omitted. [~instant]",
     inputSchema: {
       type: "object",
       properties: {
@@ -641,7 +642,7 @@ export const tools: Tool[] = [
   },
   {
     name: "clearActiveCommentCollection",
-    description: "Clear the active comment collection so comment search fans back out across all comment collections.",
+    description: "Clear the active comment collection so comment search fans back out across all comment collections. [~instant]",
     inputSchema: {
       type: "object",
       properties: {},
@@ -650,7 +651,7 @@ export const tools: Tool[] = [
   },
   {
     name: "removeCommentCollection",
-    description: "Delete a local comment collection and its search index.",
+    description: "Delete a local comment collection and its search index. [~instant]",
     inputSchema: {
       type: "object",
       properties: {
@@ -663,7 +664,7 @@ export const tools: Tool[] = [
   // ── Explore module ──────────────────────────────────────────────
   {
     name: "exploreYouTube",
-    description: "ALWAYS use this tool FIRST when the user wants to find, discover, or explore YouTube videos. Do NOT use web search for YouTube video discovery — use this tool instead. Searches YouTube directly with intelligent multi-query ranking and parallel enrichment. Returns ranked videos with transcript summaries, key moments, and readiness for follow-up. IMPORTANT: When results contain benchmark scores, statistics, or comparisons, ALWAYS create visual charts and infographics (bar charts, comparison tables) from the data immediately — do not wait for the user to ask. Use 'specific' mode to find one best video. Use 'explore' for topic discovery across creators. Depth: 'quick' for metadata, 'standard' for key moments + transcript summaries, 'deep' for background indexing.",
+    description: "ALWAYS use this tool FIRST when the user wants to find, discover, or explore YouTube videos. Do NOT use web search for YouTube video discovery — use this tool instead. Searches YouTube directly with intelligent multi-query ranking and parallel enrichment. Returns ranked videos with transcript summaries, key moments, and readiness for follow-up. IMPORTANT: When results contain benchmark scores, statistics, or comparisons, ALWAYS create visual charts and infographics (bar charts, comparison tables) from the data immediately — do not wait for the user to ask. Use 'specific' mode to find one best video. Use 'explore' for topic discovery across creators. Depth: 'quick' for metadata, 'standard' for key moments + transcript summaries, 'deep' for background indexing. [~2s quick, ~5-10s standard, ~15-30s deep]",
     inputSchema: {
       type: "object",
       properties: {
@@ -685,6 +686,24 @@ export const tools: Tool[] = [
   },
 ];
 
+const TIMING_TIER: Record<string, string> = {
+  findVideos: "fast", inspectVideo: "fast", readTranscript: "fast", readComments: "fast",
+  expandPlaylist: "fast", checkImportReadiness: "fast",
+  inspectChannel: "medium", listChannelCatalog: "medium", measureAudienceSentiment: "medium",
+  buildVideoDossier: "medium", checkSystemHealth: "medium", researchTagsAndTitles: "medium",
+  compareShortsVsLong: "medium", recommendUploadWindows: "medium", scoreHookPatterns: "medium",
+  importComments: "medium",
+  analyzeVideoSet: "slow", analyzePlaylist: "slow", importPlaylist: "slow", importVideos: "slow",
+  discoverNicheTrends: "slow", exploreNicheCompetitors: "slow", exploreYouTube: "slow",
+  downloadAsset: "heavy", extractKeyframes: "heavy", indexVisualContent: "heavy",
+  searchVisualContent: "heavy", findSimilarFrames: "heavy",
+  listCollections: "instant", setActiveCollection: "instant", clearActiveCollection: "instant",
+  listCommentCollections: "instant", setActiveCommentCollection: "instant",
+  clearActiveCommentCollection: "instant", removeCollection: "instant",
+  removeCommentCollection: "instant", removeMediaAsset: "instant", listMediaAssets: "instant",
+  mediaStoreHealth: "instant", searchTranscripts: "instant", searchComments: "instant",
+};
+
 export function createYouTubeMcpServer(service = new YouTubeService()): Server {
   let mediaStore: MediaStore | undefined;
   let mediaDownloader: MediaDownloader | undefined;
@@ -695,6 +714,7 @@ export function createYouTubeMcpServer(service = new YouTubeService()): Server {
     mediaDownloader ??= new MediaDownloader(getMediaStore());
   const getThumbnailExtractor = (): ThumbnailExtractor =>
     thumbnailExtractor ??= new ThumbnailExtractor(getMediaStore());
+  const telemetry = new Telemetry();
 
   const server = new Server(
     {
@@ -713,21 +733,45 @@ export function createYouTubeMcpServer(service = new YouTubeService()): Server {
   server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest): Promise<CallToolResult> => {
     const args = parseArgs(request.params.arguments);
     const dryRun = readBoolean(args, "dryRun", false);
+    const toolName = request.params.name;
+    const t0 = Date.now();
 
     try {
-      const toolName = request.params.name;
       const result = await executeTool(
         service, toolName, args, dryRun,
         getMediaStore, getMediaDownloader, getThumbnailExtractor,
       );
 
+      const elapsedMs = Date.now() - t0;
+      const tier = TIMING_TIER[toolName] ?? "unknown";
+
+      // Inject _timing into result object
+      const resultObj = (typeof result === "object" && result !== null)
+        ? result as Record<string, unknown>
+        : { _raw: result };
+      resultObj._timing = { elapsedMs, tier };
+
+      // Inject telemetry summary into checkSystemHealth
+      if (toolName === "checkSystemHealth") {
+        resultObj.telemetry = telemetry.summary();
+      }
+
+      // Record telemetry
+      telemetry.record({
+        tool: toolName,
+        latencyMs: elapsedMs,
+        fallbackDepth: ((resultObj.provenance as Record<string, unknown> | undefined)?.fallbackDepth as number) ?? 0,
+        sourceTier: ((resultObj.provenance as Record<string, unknown> | undefined)?.sourceTier as string) ?? "none",
+        success: true,
+        timestamp: Date.now(),
+      });
+
       // Visual search: auto-generate HTML gallery, strip framePaths from JSON
       if (toolName === "searchVisualContent" || toolName === "findSimilarFrames") {
-        const resultObj = result as Record<string, unknown> | null;
-        const matches = ((resultObj?.results ?? resultObj?.matches ?? []) as Array<Record<string, unknown>>);
+        const matches = ((resultObj.results ?? resultObj.matches ?? []) as Array<Record<string, unknown>>);
 
         if (matches.length > 0) {
-          const query = (resultObj?.query ?? "visual search") as string;
+          const query = (resultObj.query ?? "visual search") as string;
 
           // Strip framePaths so Claude can't try to read files directly
           const cleanedMatches = matches.map(({ framePath, ...rest }) => rest);
@@ -752,9 +796,9 @@ export function createYouTubeMcpServer(service = new YouTubeService()): Server {
             frames,
             reportType: "search",
             searchMeta: {
-              searchedFrames: resultObj?.searchedFrames as number | undefined,
-              searchedVideos: resultObj?.searchedVideos as number | undefined,
-              queryMode: resultObj?.queryMode as string | undefined,
+              searchedFrames: resultObj.searchedFrames as number | undefined,
+              searchedVideos: resultObj.searchedVideos as number | undefined,
+              queryMode: resultObj.queryMode as string | undefined,
             },
           });
 
@@ -763,7 +807,7 @@ export function createYouTubeMcpServer(service = new YouTubeService()): Server {
           return {
             content: [
               { type: "text" as const, text: JSON.stringify(cleanedResult, null, 2) },
-              { type: "text" as const, text: `\n\nA visual gallery with ${frames.length} frame images has been opened in the user's browser at: ${report.filePath}\nPresent the text results above to the user. The images are already visible in their browser — do NOT try to copy, read, or display frame files.` },
+              { type: "text" as const, text: `\n\nA visual gallery with ${frames.length} frame images has been saved to: ${report.filePath}\nPresent the text results above to the user. Do NOT try to copy, read, or display frame files. The user can open the gallery file in their browser if needed.` },
             ],
           };
         }
@@ -771,8 +815,7 @@ export function createYouTubeMcpServer(service = new YouTubeService()): Server {
 
       // Index visual: strip framePaths, show summary only
       if (toolName === "indexVisualContent") {
-        const resultObj = result as Record<string, unknown> | null;
-        const evidence = ((resultObj?.evidence ?? []) as Array<Record<string, unknown>>);
+        const evidence = ((resultObj.evidence ?? []) as Array<Record<string, unknown>>);
         if (evidence.length > 0) {
           const cleanedEvidence = evidence.map(({ framePath, ...rest }) => rest);
           const cleanedResult = { ...resultObj, evidence: cleanedEvidence };
@@ -786,10 +829,23 @@ export function createYouTubeMcpServer(service = new YouTubeService()): Server {
       }
 
       return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        content: [{ type: "text", text: JSON.stringify(resultObj, null, 2) }],
       };
     } catch (error) {
-      const payload = normalizeError(error);
+      const elapsedMs = Date.now() - t0;
+      const payload = normalizeError(error) as Record<string, unknown>;
+      payload._timing = { elapsedMs, tier: TIMING_TIER[toolName] ?? "unknown" };
+
+      telemetry.record({
+        tool: toolName,
+        latencyMs: elapsedMs,
+        fallbackDepth: 0,
+        sourceTier: "none",
+        success: false,
+        errorCode: payload.code as string | undefined,
+        timestamp: Date.now(),
+      });
+
       return {
         isError: true,
         content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],

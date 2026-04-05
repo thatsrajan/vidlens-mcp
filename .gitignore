@@ -1,8 +1,13 @@
 node_modules
 dist
 .env
+.mcp.json
 .DS_Store
 *.log
 *.orig
 *conflicted copy*
 documents/
+docs/
+.mcpregistry_*
+.claude/
+assets/v2/

@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/rajanrengasamy/vidlens-mcp/main/assets/readme-banner.png" alt="VidLens — The YouTube intelligence layer for AI agents" width="800" />
+  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/readme-banner.png" alt="VidLens — YouTube as a queryable database for AI agents" width="800" />
 </p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/vidlens-mcp"><img src="https://img.shields.io/npm/v/vidlens-mcp?style=flat-square&color=red" alt="npm" /></a>
-  <a href="https://github.com/rajanrengasamy/vidlens-mcp/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License" /></a>
+  <a href="https://github.com/thatsrajan/vidlens-mcp/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License" /></a>
   <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-compatible-green?style=flat-square" alt="MCP" /></a>
   <img src="https://img.shields.io/badge/tools-41-orange?style=flat-square" alt="41 tools" />
   <img src="https://img.shields.io/badge/zero--config-✓-brightgreen?style=flat-square" alt="Zero Config" />
@@ -320,7 +320,7 @@ Start a Claude Code session with `claude --remote-control`, then continue from a
 ### System Overview
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/rajanrengasamy/vidlens-mcp/main/assets/arch-system-overview.png" alt="VidLens System Overview" width="800" />
+  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/arch-system-overview.png" alt="VidLens System Overview" width="800" />
 </p>
 
 ### How the Fallback Chain Works
@@ -328,7 +328,7 @@ Start a Claude Code session with `claude --remote-control`, then continue from a
 Every tool that touches YouTube data uses the same resilience pattern:
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/rajanrengasamy/vidlens-mcp/main/assets/arch-fallback-chain.png" alt="VidLens Fallback Chain" width="800" />
+  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/arch-fallback-chain.png" alt="VidLens Fallback Chain" width="800" />
 </p>
 
 Every response includes a `provenance` field telling you exactly which tier served the data and whether anything was partial. No silent degradation — you always know what happened.
@@ -338,7 +338,7 @@ Every response includes a `provenance` field telling you exactly which tier serv
 Visual search is not transcript reuse. It's a dedicated three-layer index:
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/rajanrengasamy/vidlens-mcp/main/assets/arch-visual-pipeline.png" alt="VidLens Visual Search Pipeline" width="800" />
+  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/arch-visual-pipeline.png" alt="VidLens Visual Search Pipeline" width="800" />
 </p>
 
 **Three layers, all real:**
@@ -351,7 +351,7 @@ Visual search is not transcript reuse. It's a dedicated three-layer index:
 Everything lives in a single directory. No external databases, no Docker, no infrastructure.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/rajanrengasamy/vidlens-mcp/main/assets/arch-data-storage.png" alt="VidLens Data Storage" width="600" />
+  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/arch-data-storage.png" alt="VidLens Data Storage" width="600" />
 </p>
 
 One directory. Portable. Back it up by copying. Delete it to start fresh.
@@ -400,7 +400,7 @@ MIT
 ---
 
 <p align="center">
-  <a href="https://github.com/rajanrengasamy/vidlens-mcp">GitHub</a> ·
+  <a href="https://github.com/thatsrajan/vidlens-mcp">GitHub</a> ·
   <a href="https://www.npmjs.com/package/vidlens-mcp">npm</a> ·
   <a href="https://modelcontextprotocol.io/">Model Context Protocol</a>
 </p>
