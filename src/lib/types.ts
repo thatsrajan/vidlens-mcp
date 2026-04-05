@@ -1,4 +1,4 @@
-export type SourceTier = "youtube_api" | "yt_dlp" | "page_extract" | "none";
+export type SourceTier = "innertube" | "youtube_api" | "yt_dlp" | "page_extract" | "none";
 
 export interface Provenance {
   sourceTier: SourceTier;

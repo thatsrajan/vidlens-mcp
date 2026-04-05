@@ -39,6 +39,7 @@ import {
   type ChannelRef,
 } from "./id-parsing.js";
 import { PageExtractClient } from "./page-extract-client.js";
+import { fetchTranscript as innertubeTranscript } from "./innertube-client.js";
 import type {
   AnalyzePlaylistInput,
   AnalyzePlaylistOutput,
@@ -154,6 +155,7 @@ class ToolExecutionError extends Error {
 }
 
 const FALLBACK_DEPTH: Record<SourceTier, 0 | 1 | 2 | 3> = {
+  innertube: 0,
   youtube_api: 0,
   yt_dlp: 1,
   page_extract: 2,
@@ -319,9 +321,10 @@ export class YouTubeService {
 
   async inspectChannel(input: InspectChannelInput, options: ServiceOptions = {}): Promise<InspectChannelOutput> {
     const channelRef = this.requireChannelRef(input.channelIdOrHandleOrUrl);
-    const resolved = await this.resolveChannel(channelRef, options);
-
-    const cadence = await this.bestEffortChannelCadence(channelRef, options);
+    const [resolved, cadence] = await Promise.all([
+      this.resolveChannel(channelRef, options),
+      this.bestEffortChannelCadence(channelRef, options),
+    ]);
     const channel = resolved.data;
     const avgViewsPerVideo = channel.totalViews && channel.totalVideos
       ? Math.round(channel.totalViews / Math.max(channel.totalVideos, 1))
@@ -1271,25 +1274,29 @@ export class YouTubeService {
     const includeReplies = input.includeReplies ?? true;
     const maxRepliesPerThread = clamp(input.maxRepliesPerThread ?? 5, 0, 20);
 
-    // Fetch video metadata for title
     let videoTitle = "Unknown video";
     let channelTitle = "Unknown channel";
-    try {
-      const videoInfo = await this.inspectVideo({ videoIdOrUrl: videoId }, options);
-      videoTitle = videoInfo.video.title;
-      channelTitle = videoInfo.video.channelTitle;
-    } catch {
-      // Best-effort metadata
+
+    const [videoInfoResult, commentsResult] = await Promise.allSettled([
+      this.inspectVideo({ videoIdOrUrl: videoId }, options),
+      this.readComments({
+        videoIdOrUrl: videoId,
+        maxTopLevel,
+        includeReplies,
+        maxRepliesPerThread,
+        order: input.order ?? "relevance",
+      }, options),
+    ]);
+
+    if (videoInfoResult.status === "fulfilled") {
+      videoTitle = videoInfoResult.value.video.title;
+      channelTitle = videoInfoResult.value.video.channelTitle;
     }
 
-    // Fetch comments
-    const commentsOutput = await this.readComments({
-      videoIdOrUrl: videoId,
-      maxTopLevel,
-      includeReplies,
-      maxRepliesPerThread,
-      order: input.order ?? "relevance",
-    }, options);
+    if (commentsResult.status === "rejected") {
+      throw commentsResult.reason;
+    }
+    const commentsOutput = commentsResult.value;
 
     // Convert to CommentRecord[]
     const comments: CommentRecord[] = commentsOutput.threads.map((thread) => ({
@@ -1718,46 +1725,56 @@ export class YouTubeService {
     const provenances: Provenance[] = [];
     const failureNotes: string[] = [];
 
+    // Parse all video IDs upfront
+    const validInputs: Array<{ videoId: string }> = [];
     for (const raw of input.videoIdsOrUrls.slice(0, 20)) {
       const videoId = parseVideoId(raw);
       if (!videoId) {
         failureNotes.push(`Skipped invalid video reference: ${raw}`);
         continue;
       }
-      try {
-        const transcript = await this.readTranscript(
-          {
-            videoIdOrUrl: videoId,
-            mode: "full",
-            limit: 12000,
-          },
-          options,
-        );
-        const transcriptRecord: TranscriptRecord = {
-          videoId,
-          languageUsed: transcript.languageUsed,
-          sourceType: transcript.quality.sourceType,
-          confidence: transcript.quality.confidence,
-          transcriptText: transcript.transcript.text ?? transcript.transcript.segments?.map((segment) => segment.text).join(" ") ?? "",
-          segments: transcript.transcript.segments?.map((segment) => ({
-            tStartSec: segment.tStartSec,
-            tEndSec: segment.tEndSec,
-            text: segment.text,
-          })) ?? [],
-          chapters: transcript.chapters,
-        };
-        const hook = scoreHookPattern(videoId, transcriptRecord, hookWindowSec);
-        videos.push({
+      validInputs.push({ videoId });
+    }
+
+    // Fetch transcripts and score hooks in parallel batches of 5
+    const batchResults = await this.batchWithConcurrency(validInputs, 5, async ({ videoId }) => {
+      const transcript = await this.readTranscript(
+        { videoIdOrUrl: videoId, mode: "full", limit: 12000 },
+        options,
+      );
+      const transcriptRecord: TranscriptRecord = {
+        videoId,
+        languageUsed: transcript.languageUsed,
+        sourceType: transcript.quality.sourceType,
+        confidence: transcript.quality.confidence,
+        transcriptText: transcript.transcript.text ?? transcript.transcript.segments?.map((segment) => segment.text).join(" ") ?? "",
+        segments: transcript.transcript.segments?.map((segment) => ({
+          tStartSec: segment.tStartSec,
+          tEndSec: segment.tEndSec,
+          text: segment.text,
+        })) ?? [],
+        chapters: transcript.chapters,
+      };
+      const hook = scoreHookPattern(videoId, transcriptRecord, hookWindowSec);
+      return {
+        video: {
           videoId,
           hookScore: hook.hookScore,
           hookType: hook.hookType,
           first30SecSummary: hook.first30SecSummary,
           weakSignals: hook.weakSignals,
           improvements: hook.improvements,
-        });
-        provenances.push(transcript.provenance);
-      } catch (error) {
-        failureNotes.push(`${videoId}: ${toMessage(error)}`);
+        },
+        provenance: transcript.provenance,
+      };
+    });
+
+    for (const result of batchResults) {
+      if (result.status === "fulfilled") {
+        videos.push(result.value.video);
+        provenances.push(result.value.provenance);
+      } else {
+        failureNotes.push(result.reason instanceof Error ? result.reason.message : String(result.reason));
       }
     }
 
@@ -2508,6 +2525,8 @@ export class YouTubeService {
     const failures: Array<{ videoId: string; reason: string }> = [];
     let skipped = 0;
 
+    // Phase 1: synchronous filtering
+    const toProcess: Array<{ videoId: string }> = [];
     for (const raw of videoIdsOrUrls) {
       let videoId: string;
       try {
@@ -2531,13 +2550,19 @@ export class YouTubeService {
         continue;
       }
 
+      toProcess.push({ videoId });
+    }
+
+    // Phase 2: parallel fetch in batches of 5
+    const batchResults = await this.batchWithConcurrency(toProcess, 5, async ({ videoId }) => {
       try {
         const [video, transcript] = await Promise.all([
           this.fetchVideoInfoForIndexing(videoId, options),
           this.fetchTranscriptForIndexing(videoId, config.language, options),
         ]);
-
-        items.push({
+        return {
+          success: true as const,
+          videoId,
           video,
           transcript,
           options: {
@@ -2545,12 +2570,24 @@ export class YouTubeService {
             chunkSizeSec: clamp(config.chunkSizeSec ?? 120, 30, 900),
             chunkOverlapSec: clamp(config.chunkOverlapSec ?? 30, 0, 300),
           },
-        });
+        };
       } catch (error) {
-        failures.push({
+        return {
+          success: false as const,
           videoId,
           reason: error instanceof Error ? error.message : String(error),
-        });
+        };
+      }
+    });
+
+    for (const result of batchResults) {
+      if (result.status === "fulfilled") {
+        const val = result.value;
+        if (val.success) {
+          items.push({ video: val.video, transcript: val.transcript, options: val.options });
+        } else {
+          failures.push({ videoId: val.videoId, reason: val.reason });
+        }
       }
     }
 
@@ -2618,26 +2655,50 @@ export class YouTubeService {
     };
     const provenances: Provenance[] = [];
 
-    let cachedVideoInfo: InspectVideoOutput | undefined;
-    let cachedTranscript: ReadTranscriptOutput | undefined;
-    let cachedComments: ReadCommentsOutput | undefined;
+    // Pre-fetch needed resources in parallel
+    const needsVideoInfo = analyses.some((a) => a === "video_info" || a === "tag_title_patterns");
+    const needsTranscript = analyses.some((a) => a === "transcript" || a === "hook_patterns");
+    const needsComments = analyses.includes("comments");
+    // Use "full"/12000 if hook_patterns requested (superset of other transcript modes)
+    const transcriptMode = analyses.includes("hook_patterns") ? "full" as const : config.transcriptMode;
+    const transcriptLimit = analyses.includes("hook_patterns") ? 12000 : undefined;
+
+    const fetches = await Promise.allSettled([
+      needsVideoInfo ? this.inspectVideo({ videoIdOrUrl: videoId }, options) : Promise.resolve(undefined),
+      needsTranscript ? this.readTranscript({ videoIdOrUrl: videoId, mode: transcriptMode, limit: transcriptLimit }, options) : Promise.resolve(undefined),
+      needsComments ? this.readComments({ videoIdOrUrl: videoId, maxTopLevel: config.commentsSampleSize }, options) : Promise.resolve(undefined),
+    ]);
+
+    const cachedVideoInfo = fetches[0].status === "fulfilled" ? fetches[0].value as InspectVideoOutput | undefined : undefined;
+    const cachedTranscript = fetches[1].status === "fulfilled" ? fetches[1].value as ReadTranscriptOutput | undefined : undefined;
+    const cachedComments = fetches[2].status === "fulfilled" ? fetches[2].value as ReadCommentsOutput | undefined : undefined;
+
+    // Collect per-fetch errors for analyses that needed them
+    const fetchErrors: Map<string, unknown> = new Map();
+    if (needsVideoInfo && fetches[0].status === "rejected") fetchErrors.set("video_info", fetches[0].reason);
+    if (needsTranscript && fetches[1].status === "rejected") fetchErrors.set("transcript", fetches[1].reason);
+    if (needsComments && fetches[2].status === "rejected") fetchErrors.set("comments", fetches[2].reason);
 
     for (const analysis of analyses) {
       try {
         if (analysis === "video_info") {
-          cachedVideoInfo = cachedVideoInfo ?? (await this.inspectVideo({ videoIdOrUrl: videoId }, options));
-          item.analyses.videoInfo = cachedVideoInfo;
-          provenances.push(cachedVideoInfo.provenance);
+          if (fetchErrors.has("video_info")) throw fetchErrors.get("video_info");
+          if (cachedVideoInfo) {
+            item.analyses.videoInfo = cachedVideoInfo;
+            provenances.push(cachedVideoInfo.provenance);
+          }
         } else if (analysis === "transcript") {
-          cachedTranscript = cachedTranscript ??
-            (await this.readTranscript({ videoIdOrUrl: videoId, mode: config.transcriptMode }, options));
-          item.analyses.transcript = cachedTranscript;
-          provenances.push(cachedTranscript.provenance);
+          if (fetchErrors.has("transcript")) throw fetchErrors.get("transcript");
+          if (cachedTranscript) {
+            item.analyses.transcript = cachedTranscript;
+            provenances.push(cachedTranscript.provenance);
+          }
         } else if (analysis === "comments") {
-          cachedComments = cachedComments ??
-            (await this.readComments({ videoIdOrUrl: videoId, maxTopLevel: config.commentsSampleSize }, options));
-          item.analyses.comments = cachedComments;
-          provenances.push(cachedComments.provenance);
+          if (fetchErrors.has("comments")) throw fetchErrors.get("comments");
+          if (cachedComments) {
+            item.analyses.comments = cachedComments;
+            provenances.push(cachedComments.provenance);
+          }
         } else if (analysis === "sentiment") {
           const sentiment = await this.measureAudienceSentiment(
             { videoIdOrUrl: videoId, sampleSize: config.commentsSampleSize },
@@ -2646,51 +2707,54 @@ export class YouTubeService {
           item.analyses.sentiment = sentiment;
           provenances.push(sentiment.provenance);
         } else if (analysis === "hook_patterns") {
-          cachedTranscript = cachedTranscript ??
-            (await this.readTranscript({ videoIdOrUrl: videoId, mode: "full", limit: 12000 }, options));
-          const transcriptRecord: TranscriptRecord = {
-            videoId,
-            languageUsed: cachedTranscript.languageUsed,
-            sourceType: cachedTranscript.quality.sourceType,
-            confidence: cachedTranscript.quality.confidence,
-            transcriptText: cachedTranscript.transcript.text ?? cachedTranscript.transcript.segments?.map((segment) => segment.text).join(" ") ?? "",
-            segments: cachedTranscript.transcript.segments?.map((segment) => ({
-              tStartSec: segment.tStartSec,
-              tEndSec: segment.tEndSec,
-              text: segment.text,
-            })) ?? [],
-            chapters: cachedTranscript.chapters,
-          };
-          const hook = scoreHookPattern(videoId, transcriptRecord, 30);
-          item.analyses.hookPatterns = {
-            hookScore: hook.hookScore,
-            hookType: hook.hookType,
-            first30SecSummary: hook.first30SecSummary,
-          };
-          provenances.push(cachedTranscript.provenance);
+          if (fetchErrors.has("transcript")) throw fetchErrors.get("transcript");
+          if (cachedTranscript) {
+            const transcriptRecord: TranscriptRecord = {
+              videoId,
+              languageUsed: cachedTranscript.languageUsed,
+              sourceType: cachedTranscript.quality.sourceType,
+              confidence: cachedTranscript.quality.confidence,
+              transcriptText: cachedTranscript.transcript.text ?? cachedTranscript.transcript.segments?.map((segment) => segment.text).join(" ") ?? "",
+              segments: cachedTranscript.transcript.segments?.map((segment) => ({
+                tStartSec: segment.tStartSec,
+                tEndSec: segment.tEndSec,
+                text: segment.text,
+              })) ?? [],
+              chapters: cachedTranscript.chapters,
+            };
+            const hook = scoreHookPattern(videoId, transcriptRecord, 30);
+            item.analyses.hookPatterns = {
+              hookScore: hook.hookScore,
+              hookType: hook.hookType,
+              first30SecSummary: hook.first30SecSummary,
+            };
+            provenances.push(cachedTranscript.provenance);
+          }
         } else if (analysis === "tag_title_patterns") {
-          cachedVideoInfo = cachedVideoInfo ?? (await this.inspectVideo({ videoIdOrUrl: videoId }, options));
-          item.analyses.tagTitlePatterns = {
-            recurringKeywords: extractRecurringKeywords([
-              {
-                videoId,
-                title: cachedVideoInfo.video.title,
-                channelId: cachedVideoInfo.video.channelId,
-                channelTitle: cachedVideoInfo.video.channelTitle,
-                publishedAt: cachedVideoInfo.video.publishedAt,
-                durationSec: cachedVideoInfo.video.durationSec,
-                views: cachedVideoInfo.stats.views,
-                likes: cachedVideoInfo.stats.likes,
-                comments: cachedVideoInfo.stats.comments,
-                tags: cachedVideoInfo.video.tags,
-                language: cachedVideoInfo.video.language,
-                category: cachedVideoInfo.video.category,
-                url: "",
-              },
-            ]),
-            titleStructure: [titleStructure(cachedVideoInfo.video.title)],
-          };
-          provenances.push(cachedVideoInfo.provenance);
+          if (fetchErrors.has("video_info")) throw fetchErrors.get("video_info");
+          if (cachedVideoInfo) {
+            item.analyses.tagTitlePatterns = {
+              recurringKeywords: extractRecurringKeywords([
+                {
+                  videoId,
+                  title: cachedVideoInfo.video.title,
+                  channelId: cachedVideoInfo.video.channelId,
+                  channelTitle: cachedVideoInfo.video.channelTitle,
+                  publishedAt: cachedVideoInfo.video.publishedAt,
+                  durationSec: cachedVideoInfo.video.durationSec,
+                  views: cachedVideoInfo.stats.views,
+                  likes: cachedVideoInfo.stats.likes,
+                  comments: cachedVideoInfo.stats.comments,
+                  tags: cachedVideoInfo.video.tags,
+                  language: cachedVideoInfo.video.language,
+                  category: cachedVideoInfo.video.category,
+                  url: "",
+                },
+              ]),
+              titleStructure: [titleStructure(cachedVideoInfo.video.title)],
+            };
+            provenances.push(cachedVideoInfo.provenance);
+          }
         }
       } catch (error) {
         item.errors?.push(this.normalizeError(error));
@@ -2799,14 +2863,30 @@ export class YouTubeService {
       "resolveTranscript",
       { videoId, language: language ?? null },
       options,
-      () => this.executeFallback(
-        {
-          yt_dlp: () => this.ytdlp.transcript(videoId, language),
-        },
-        this.sampleTranscript(videoId),
-        options,
-        { partialTiers: [] },
-      ),
+      async () => {
+        if (!this.isDryRun(options)) {
+          // Tier 0: InnerTube direct — no binary, no API key
+          try {
+            const data = await innertubeTranscript(videoId, language);
+            return {
+              data,
+              provenance: this.makeProvenance("innertube", false, ["InnerTube direct fetch succeeded."]),
+            };
+          } catch {
+            // Fall through to yt-dlp
+          }
+        }
+
+        // Tier 1+: yt-dlp fallback
+        return this.executeFallback(
+          {
+            yt_dlp: () => this.ytdlp.transcript(videoId, language),
+          },
+          this.sampleTranscript(videoId),
+          options,
+          { partialTiers: [] },
+        );
+      },
     );
   }
 
@@ -2991,6 +3071,19 @@ export class YouTubeService {
 
   private isDryRun(options: ServiceOptions): boolean {
     return this.dryRun || Boolean(options.dryRun);
+  }
+
+  private async batchWithConcurrency<T, R>(
+    items: T[],
+    concurrency: number,
+    fn: (item: T) => Promise<R>,
+  ): Promise<PromiseSettledResult<R>[]> {
+    const results: PromiseSettledResult<R>[] = [];
+    for (let i = 0; i < items.length; i += concurrency) {
+      const batch = items.slice(i, i + concurrency);
+      results.push(...await Promise.allSettled(batch.map(fn)));
+    }
+    return results;
   }
 
   private requireVideoId(input: string): string {
