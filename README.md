@@ -10,6 +10,16 @@
   <img src="https://img.shields.io/badge/zero--config-✓-brightgreen?style=flat-square" alt="Zero Config" />
 </p>
 
+<p align="center">
+  <a href="https://youtu.be/mpEUOt0ol5c">
+    <img src="https://img.shields.io/badge/▶%20Watch%20the%2060s%20demo-FF0000?style=for-the-badge&logo=youtube&logoColor=white" alt="Watch the 60s demo" />
+  </a>
+</p>
+
+<p align="center">
+  <em>Most tools can read what was said in a video. VidLens can see what was shown.</em>
+</p>
+
 ---
 
 ## 🔍 What is VidLens?
