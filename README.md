@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/readme-banner.png" alt="VidLens — YouTube as a queryable database for AI agents" width="800" />
+  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/readme-banner.png?v=20260407" alt="VidLens — YouTube as a queryable database for AI agents" width="800" />
 </p>
 
 <p align="center">
@@ -29,6 +29,10 @@
 VidLens is a [Model Context Protocol](https://modelcontextprotocol.io/) server that gives AI agents deep, reliable access to YouTube. Not just transcripts — full intelligence: search, analysis, visual search, and auto-generated comparison charts.
 
 **No API key required to start.** Every tool has a three-tier fallback chain (YouTube API → yt-dlp → page extraction) so nothing breaks when quota runs out or keys aren't configured.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/gifs/demo-one-prompt-research.gif" alt="One prompt → full research pipeline with benchmark comparison" width="800" />
+</p>
 
 ### Try it — paste any of these into Claude:
 
@@ -60,8 +64,16 @@ Import entire playlists or video sets, index every transcript with Gemini embedd
 ### 👁️ Visual Search — See What's In Videos
 Extract keyframes, describe them with Gemini Vision, run OCR on slides and whiteboards, and search by what you **see** — not just what's said.
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/gifs/demo-visual-search.gif" alt="Visual search — find benchmark charts inside videos by searching" width="800" />
+</p>
+
 ### 📊 Intelligence Layer — Not Just Data
 Sentiment analysis, niche trend discovery, content gap detection, hook pattern analysis, upload timing recommendations. The LLM does the thinking — VidLens gives it the right data.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/gifs/demo-video-intelligence.gif" alt="Video intelligence — stats, structure analysis, and comment sentiment" width="800" />
+</p>
 
 ### ⚡ Zero Config, Always Works
 No API key needed to start. Three-tier fallback chain on every tool. Nothing breaks when quota runs out. Keys are optional power-ups.
