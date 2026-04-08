@@ -11,4 +11,5 @@ docs/
 .mcpregistry_*
 .claude/
 assets/v2/
+*.mp4
 mcp-publisher
