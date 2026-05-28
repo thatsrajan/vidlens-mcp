@@ -61,10 +61,18 @@ export class ThumbnailExtractor {
       );
     }
 
+    try {
+      await this.probe();
+    } catch {
+      throw new Error(
+        `ffmpeg and ffprobe are required for keyframe extraction and visual indexing. Install them first (${ffmpegInstallHint(process.platform)}), then rerun extractKeyframes or indexVisualContent.`,
+      );
+    }
+
     const videoProbe = await this.probeVideo(videoPath);
     const durationSec = videoProbe.durationSec;
     if (!durationSec || durationSec <= 0) {
-      throw new Error(`Could not determine duration for ${videoPath}`);
+      throw new Error(`Could not determine duration for ${videoPath}. Confirm ffmpeg/ffprobe can read this file, then rerun extraction.`);
     }
 
     // Calculate timestamps
@@ -218,6 +226,16 @@ export class ThumbnailExtractor {
 
     return results.filter((asset): asset is MediaAsset => asset !== null);
   }
+}
+
+function ffmpegInstallHint(platform: NodeJS.Platform): string {
+  if (platform === "darwin") {
+    return "brew install ffmpeg";
+  }
+  if (platform === "win32") {
+    return "winget install Gyan.FFmpeg";
+  }
+  return "sudo apt install ffmpeg";
 }
 
 /** Run `fn` over `items` with at most `concurrency` in-flight at once, preserving order. */

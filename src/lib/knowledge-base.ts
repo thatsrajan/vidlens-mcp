@@ -69,6 +69,9 @@ interface StoredChunk {
   videoId: string;
   videoTitle: string;
   channelTitle: string;
+  sourcePlatform?: string;
+  sourceId?: string;
+  canonicalUrl?: string;
   ordinal: number;
   tStartSec: number;
   tEndSec?: number;
@@ -92,6 +95,9 @@ interface SearchRow {
   videoId: string;
   videoTitle: string;
   channelTitle: string;
+  sourcePlatform?: string;
+  sourceId?: string;
+  canonicalUrl?: string;
   ordinal: number;
   tStartSec: number;
   tEndSec?: number;
@@ -135,9 +141,12 @@ export class TranscriptKnowledgeBase {
         channel_title TEXT,
         published_at TEXT,
         transcript_language TEXT,
-        transcript_source_type TEXT,
-        url TEXT,
-        transcript_characters INTEGER,
+	        transcript_source_type TEXT,
+	        url TEXT,
+	        source_platform TEXT,
+	        source_id TEXT,
+	        canonical_url TEXT,
+	        transcript_characters INTEGER,
         transcript_segments INTEGER,
         imported_at TEXT NOT NULL,
         PRIMARY KEY (collection_id, video_id),
@@ -177,9 +186,29 @@ export class TranscriptKnowledgeBase {
 
       CREATE INDEX IF NOT EXISTS idx_transcript_chunks_collection_video_ordinal
         ON transcript_chunks(collection_id, video_id, ordinal);
-      CREATE INDEX IF NOT EXISTS idx_transcript_chunks_collection
-        ON transcript_chunks(collection_id);
+	      CREATE INDEX IF NOT EXISTS idx_transcript_chunks_collection
+	        ON transcript_chunks(collection_id);
+	    `);
+    this.addColumnIfMissing("collection_videos", "source_platform", "TEXT");
+    this.addColumnIfMissing("collection_videos", "source_id", "TEXT");
+    this.addColumnIfMissing("collection_videos", "canonical_url", "TEXT");
+    this.db.exec(`
+      UPDATE collection_videos
+      SET source_platform = 'youtube'
+      WHERE source_platform IS NULL;
     `);
+    const rows = this.db.prepare("SELECT collection_id, video_id FROM collection_videos WHERE canonical_url IS NULL").all() as Array<{ collection_id: string; video_id: string }>;
+    const updateCanonical = this.db.prepare("UPDATE collection_videos SET canonical_url = ? WHERE collection_id = ? AND video_id = ?");
+    for (const row of rows) {
+      updateCanonical.run(buildVideoUrl(row.video_id), row.collection_id, row.video_id);
+    }
+	  }
+
+  private addColumnIfMissing(table: string, column: string, definition: string): void {
+    const rows = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (!rows.some((row) => row.name === column)) {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
   }
 
   ensureCollection(seed: CollectionSeed): { collectionId: string; created: boolean } {
@@ -485,13 +514,16 @@ export class TranscriptKnowledgeBase {
         const next = context?.get(row.ordinal + 1);
         results.push({
           collectionId,
-          videoId: row.videoId,
-          videoTitle: row.videoTitle,
-          channelTitle: row.channelTitle,
-          chunkText: row.text,
-          tStartSec: row.tStartSec,
-          tEndSec: row.tEndSec,
-          timestampUrl: buildTimestampUrl(row.videoId, row.tStartSec),
+	          videoId: row.videoId,
+	          videoTitle: row.videoTitle,
+	          channelTitle: row.channelTitle,
+	          sourcePlatform: row.sourcePlatform as SearchTranscriptsOutput["results"][number]["sourcePlatform"],
+	          sourceId: row.sourceId,
+	          canonicalUrl: row.canonicalUrl,
+	          chunkText: row.text,
+	          tStartSec: row.tStartSec,
+	          tEndSec: row.tEndSec,
+	          timestampUrl: buildTimestampUrl(row.videoId, row.tStartSec, row.sourcePlatform, row.canonicalUrl),
           score: round(row.score, 4),
           lexicalScore: round(row.lexicalScore, 4),
           semanticScore: row.semanticScore !== undefined ? round(row.semanticScore, 4) : undefined,
@@ -548,12 +580,12 @@ export class TranscriptKnowledgeBase {
     let chunksCreated = 0;
     const allItems = items.length;
 
-    const insertVideo = this.db.prepare(`
-      INSERT OR REPLACE INTO collection_videos (
-        collection_id, video_id, title, channel_title, published_at, transcript_language, transcript_source_type, url,
-        transcript_characters, transcript_segments, imported_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+	    const insertVideo = this.db.prepare(`
+	      INSERT OR REPLACE INTO collection_videos (
+	        collection_id, video_id, title, channel_title, published_at, transcript_language, transcript_source_type, url,
+	        source_platform, source_id, canonical_url, transcript_characters, transcript_segments, imported_at
+	      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	    `);
     const insertChunk = this.db.prepare(`
       INSERT OR REPLACE INTO transcript_chunks (
         chunk_id, collection_id, video_id, ordinal, t_start_sec, t_end_sec, text, token_count, terms_json, doc_norm, embedding_json
@@ -576,12 +608,15 @@ export class TranscriptKnowledgeBase {
             item.video.title,
             item.video.channelTitle,
             item.video.publishedAt ?? null,
-            item.transcript.languageUsed ?? null,
-            item.transcript.sourceType,
-            item.video.url || buildVideoUrl(item.video.videoId),
-            item.transcript.transcriptText.length,
-            item.transcript.segments.length,
-            now,
+	            item.transcript.languageUsed ?? null,
+	            item.transcript.sourceType,
+	            item.video.url || buildVideoUrl(item.video.videoId),
+	            item.video.sourcePlatform ?? "youtube",
+	            item.video.sourceId ?? item.video.videoId,
+	            item.video.canonicalUrl ?? item.video.url ?? buildVideoUrl(item.video.videoId),
+	            item.transcript.transcriptText.length,
+	            item.transcript.segments.length,
+	            now,
           );
 
           chunks.forEach((chunk, index) => {
@@ -740,10 +775,13 @@ export class TranscriptKnowledgeBase {
       SELECT
         ch.chunk_id,
         ch.collection_id,
-        ch.video_id,
-        v.title AS video_title,
-        v.channel_title,
-        ch.ordinal,
+	        ch.video_id,
+	        v.title AS video_title,
+	        v.channel_title,
+	        v.source_platform,
+	        v.source_id,
+	        v.canonical_url,
+	        ch.ordinal,
         ch.t_start_sec,
         ch.t_end_sec,
         ch.text,
@@ -770,8 +808,11 @@ export class TranscriptKnowledgeBase {
       collection_id: string;
       video_id: string;
       video_title: string | null;
-      channel_title: string | null;
-      ordinal: number;
+	      channel_title: string | null;
+	      source_platform: string | null;
+	      source_id: string | null;
+	      canonical_url: string | null;
+	      ordinal: number;
       t_start_sec: number;
       t_end_sec: number | null;
       text: string;
@@ -784,9 +825,12 @@ export class TranscriptKnowledgeBase {
         chunkId: row.chunk_id,
         collectionId: row.collection_id,
         videoId: row.video_id,
-        videoTitle: row.video_title ?? row.video_id,
-        channelTitle: row.channel_title ?? "Unknown channel",
-        ordinal: Number(row.ordinal),
+	        videoTitle: row.video_title ?? row.video_id,
+	        channelTitle: row.channel_title ?? "Unknown channel",
+	        sourcePlatform: row.source_platform ?? undefined,
+	        sourceId: row.source_id ?? undefined,
+	        canonicalUrl: row.canonical_url ?? undefined,
+	        ordinal: Number(row.ordinal),
         tStartSec: Number(row.t_start_sec),
         tEndSec: row.t_end_sec === null ? undefined : Number(row.t_end_sec),
         text: row.text,
@@ -1127,10 +1171,13 @@ async function rankCollection(
   const chunks: StoredChunk[] = rows.map((row) => ({
     chunkId: row.chunkId,
     collectionId: row.collectionId,
-    videoId: row.videoId,
-    videoTitle: row.videoTitle,
-    channelTitle: row.channelTitle,
-    ordinal: row.ordinal,
+	    videoId: row.videoId,
+	    videoTitle: row.videoTitle,
+	    channelTitle: row.channelTitle,
+	    sourcePlatform: row.sourcePlatform,
+	    sourceId: row.sourceId,
+	    canonicalUrl: row.canonicalUrl,
+	    ordinal: row.ordinal,
     tStartSec: row.tStartSec,
     tEndSec: row.tEndSec,
     text: row.text,
@@ -1240,8 +1287,27 @@ function cosineSimilarities(chunks: StoredChunk[], queryEmbedding: number[]): Ar
   });
 }
 
-function buildTimestampUrl(videoId: string, tStartSec: number): string {
-  return `https://youtu.be/${videoId}?t=${Math.max(0, Math.floor(tStartSec))}`;
+function buildTimestampUrl(videoId: string, tStartSec: number, sourcePlatform?: string, canonicalUrl?: string): string {
+  const seconds = Math.max(0, Math.floor(tStartSec));
+  if (!sourcePlatform || sourcePlatform === "youtube") {
+    return `https://youtu.be/${videoId}?t=${seconds}`;
+  }
+  if (!canonicalUrl) {
+    return videoId;
+  }
+  if (sourcePlatform === "generic_url" || sourcePlatform === "local_file") {
+    return canonicalUrl;
+  }
+  try {
+    const url = new URL(canonicalUrl);
+    if (sourcePlatform === "x") {
+      url.searchParams.set("t", `${seconds}s`);
+      return url.toString();
+    }
+    return canonicalUrl;
+  } catch {
+    return canonicalUrl;
+  }
 }
 
 function humanizeAlgorithm(algorithm: string): string {

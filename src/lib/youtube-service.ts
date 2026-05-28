@@ -32,6 +32,13 @@ import { MediaStore } from "./media-store.js";
 import { MediaDownloader } from "./media-downloader.js";
 import { ThumbnailExtractor } from "./thumbnail-extractor.js";
 import { VisualSearchEngine } from "./visual-search.js";
+import { CookieStore } from "./auth/cookie-store.js";
+import { assessYtDlpFreshness, fetchLatestYtDlpVersion } from "./diagnostics/yt-dlp-freshness.js";
+import { probeJsRuntime } from "./diagnostics/js-runtime.js";
+import { allProviders, providerForSource } from "./providers/registry.js";
+import { redactError } from "./redactor.js";
+import { selectSttProvider } from "./stt/selector.js";
+import { selectWebSearchProvider } from "./web-search/selector.js";
 import {
   parseChannelRef,
   parsePlaylistId,
@@ -79,10 +86,14 @@ import type {
   GracefulError,
   ImportCommentsInput,
   ImportCommentsOutput,
+  ImportVideoSourcesInput,
+  ImportVideoSourcesOutput,
   ImportPlaylistOutput,
   ImportVideosOutput,
   IndexVisualContentInput,
   IndexVisualContentOutput,
+  InspectVideoSourceInput,
+  InspectVideoSourceOutput,
   InspectChannelInput,
   InspectChannelOutput,
   InspectVideoInput,
@@ -117,6 +128,8 @@ import type {
   ResearchTagsAndTitlesInput,
   ResearchTagsAndTitlesOutput,
   SearchItem,
+  SearchVideoSourcesInput,
+  SearchVideoSourcesOutput,
   ScoreHookPatternsInput,
   ScoreHookPatternsOutput,
   SearchCommentsInput,
@@ -131,14 +144,17 @@ import type {
   SetActiveCommentCollectionInput,
   SetActiveCommentCollectionOutput,
   SourceTier,
-  TranscriptRecord,
-  TrendingVideo,
+	  TranscriptRecord,
+	  TranscribeVideoSourceInput,
+	  TranscribeVideoSourceOutput,
+	  TrendingVideo,
   VideoAnalysisMode,
   VideoKnowledgeBaseInput,
   VideoRecord,
 } from "./types.js";
 import { YouTubeApiClient } from "./youtube-api-client.js";
 import { YtDlpClient } from "./ytdlp-client.js";
+import { resolveVideoSource, type VideoSourceRef } from "./video-source.js";
 
 interface YouTubeServiceConfig {
   apiKey?: string;
@@ -204,9 +220,9 @@ export class YouTubeService {
     return this._mediaStore ??= new MediaStore({ dataDir: this.dataDir });
   }
 
-  private get mediaDownloader(): MediaDownloader {
-    return this._mediaDownloader ??= new MediaDownloader(this.mediaStore, this.ytDlpBinary);
-  }
+	  private get mediaDownloader(): MediaDownloader {
+	    return this._mediaDownloader ??= new MediaDownloader(this.mediaStore, this.ytDlpBinary, new CookieStore());
+	  }
 
   private get thumbnailExtractor(): ThumbnailExtractor {
     return this._thumbnailExtractor ??= new ThumbnailExtractor(this.mediaStore);
@@ -1125,17 +1141,43 @@ export class YouTubeService {
     const clients: ClientDetectionSummary[] = detectKnownClients();
     const youtubeApiConfigured = this.api.isConfigured();
     const geminiConfigured = Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY);
+    const openaiConfigured = Boolean(process.env.OPENAI_API_KEY);
+    const braveConfigured = Boolean(process.env.BRAVE_API_KEY);
+    const serpapiConfigured = Boolean(process.env.SERPAPI_KEY);
+    const sttSelection = selectSttProvider(process.env);
+    const webSearchSelection = selectWebSearchProvider(process.env);
+    const cookieStore = new CookieStore();
+    const jsRuntime = await probeJsRuntime({ dataDir: this.dataDir });
+    let ytdlpHealth: CheckSystemHealthOutput["ytdlp"];
+    let ffmpegHealth: CheckSystemHealthOutput["ffmpeg"];
 
     try {
       const probe = await this.ytdlp.probe();
       const binaryPath = this.ytdlp.getBinary();
       const source = binaryPath !== "yt-dlp" ? "managed" : "system PATH";
+      const latestVersion = runLiveChecks ? await fetchLatestYtDlpVersion().catch(() => undefined) : undefined;
+      const freshness = assessYtDlpFreshness(probe.version, undefined, latestVersion);
+      ytdlpHealth = {
+        binary: probe.binary,
+        version: probe.version,
+        freshness: freshness.status,
+        latestVersion: freshness.latestVersion,
+        recommendation: freshness.recommendation,
+      };
       checks.push({
         name: "yt_dlp",
-        status: "ok",
-        detail: `${probe.binary} available (${probe.version}, ${source}).`,
+        status: freshness.status === "severely_stale" ? "warn" : "ok",
+        detail: `${probe.binary} available (${probe.version}, ${source}; freshness: ${freshness.status}).`,
       });
+      if (freshness.status !== "fresh" && freshness.recommendation) {
+        suggestions.push(freshness.recommendation);
+      }
     } catch (error) {
+      ytdlpHealth = {
+        binary: this.ytdlp.getBinary(),
+        freshness: "unknown",
+        recommendation: "Run `npx vidlens-mcp setup` or `vidlens-mcp update-deps` to install or refresh yt-dlp.",
+      };
       checks.push({
         name: "yt_dlp",
         status: "error",
@@ -1143,6 +1185,81 @@ export class YouTubeService {
       });
       suggestions.push("Run `npx vidlens-mcp setup` to auto-download yt-dlp, or visit https://github.com/yt-dlp/yt-dlp#installation");
     }
+
+    try {
+      const probe = await this.thumbnailExtractor.probe();
+      ffmpegHealth = {
+        available: true,
+        ffmpegVersion: probe.ffmpeg,
+        ffprobeVersion: probe.ffprobe,
+      };
+      checks.push({
+        name: "ffmpeg",
+        status: "ok",
+        detail: `ffmpeg/ffprobe available (${probe.ffmpeg}).`,
+      });
+    } catch {
+      const recommendation = `Install ffmpeg for Instagram/TikTok/X reels, local video STT, frame extraction, and visual indexing: ${ffmpegInstallHint(process.platform)}`;
+      ffmpegHealth = {
+        available: false,
+        recommendation,
+      };
+      checks.push({
+        name: "ffmpeg",
+        status: "warn",
+        detail: "ffmpeg/ffprobe not detected. Social video downloads can still work, but visual indexing, keyframe extraction, and audio chunking need ffmpeg.",
+      });
+      suggestions.push(recommendation);
+    }
+
+    checks.push({
+      name: "js_runtime",
+      status: jsRuntime.runtime === "none" ? "warn" : "ok",
+      detail: jsRuntime.runtime === "none"
+        ? "No JavaScript runtime found for yt-dlp extractor JavaScript."
+        : `${jsRuntime.runtime} runtime available (${jsRuntime.version ?? "version unknown"}, ${jsRuntime.source}).`,
+    });
+    checks.push({
+      name: "stt",
+      status: sttSelection.provider ? "ok" : "skipped",
+      detail: sttSelection.details.join(" "),
+    });
+    checks.push({
+      name: "web_search",
+      status: webSearchSelection.provider ? "ok" : "skipped",
+      detail: webSearchSelection.details.join(" "),
+    });
+
+    const providerContext = {
+      ytDlpBinary: this.ytdlp.getBinary(),
+      mediaStore: this.mediaStore,
+      dataDir: this.dataDir,
+      cookieStore,
+      stt: sttSelection.provider,
+      webSearch: webSearchSelection.provider,
+      env: process.env,
+    };
+    const platforms = allProviders().map((provider) => {
+      const capabilities = provider.capabilities(providerContext);
+      const cookie = cookieStore.resolve(provider.platform);
+      const cookieDetail = cookie.mode === "file"
+        ? `cookies: ${cookie.path}`
+        : cookie.mode === "browser"
+          ? `cookies from ${cookie.browser}${cookie.profile ? `:${cookie.profile}` : ""}`
+          : "no cookies";
+      const needsWebSearch = capabilities.search === "web_fallback" && !webSearchSelection.provider;
+      const status: "ready" | "auth_required" | "degraded" | "unsupported" =
+        provider.platform === "local_file" || provider.platform === "youtube" || capabilities.download
+          ? needsWebSearch
+            ? "degraded"
+            : "ready"
+          : "unsupported";
+      return {
+        platform: provider.platform,
+        status,
+        detail: `${capabilities.search} search; transcript: ${capabilities.transcriptMode ?? "unsupported"}; ${cookie.warning ?? cookieDetail}.`,
+      };
+    });
 
     if (youtubeApiConfigured) {
       if (runLiveChecks) {
@@ -1246,11 +1363,32 @@ export class YouTubeService {
         nodeVersion: process.version,
         packageName: packageMeta.name,
         packageVersion: packageMeta.version,
+        jsRuntime: {
+          runtime: jsRuntime.runtime,
+          version: jsRuntime.version,
+          source: jsRuntime.source,
+        },
       },
       keys: {
         youtubeApiConfigured,
         geminiConfigured,
+        openaiConfigured,
+        braveConfigured,
+        serpapiConfigured,
       },
+      platforms,
+      stt: {
+        selectedProvider: sttSelection.providerId,
+        available: Boolean(sttSelection.provider),
+        details: sttSelection.details,
+      },
+      webSearch: {
+        selectedProvider: webSearchSelection.providerId,
+        available: Boolean(webSearchSelection.provider),
+        details: webSearchSelection.details,
+      },
+      ytdlp: ytdlpHealth,
+      ffmpeg: ffmpegHealth,
       clients,
       checks,
       suggestions: dedupeStrings(suggestions),
@@ -1359,10 +1497,373 @@ export class YouTubeService {
     return this.commentKnowledgeBase.removeCollection(input.collectionId.trim());
   }
 
+  // ── Universal Video Sources ──
+
+	  async inspectVideoSource(input: InspectVideoSourceInput): Promise<InspectVideoSourceOutput> {
+	    const source = resolveVideoSource(input.source);
+	    const stt = selectSttProvider(process.env);
+	    const provider = providerForSource(source);
+	    const providerContext = {
+	      ytDlpBinary: this.ytdlp.getBinary(),
+	      mediaStore: this.mediaStore,
+	      dataDir: this.dataDir,
+	      cookieStore: new CookieStore(),
+	      stt: stt.provider,
+	      env: process.env,
+	    };
+	    const capabilities = provider.capabilities(providerContext);
+	    const dynamicSource = { ...source, capabilities };
+	    return {
+	      source: summarizeSource(dynamicSource),
+      compatibility: {
+        claudeMcp: true,
+        codexMcp: true,
+        codexPlugin: true,
+      },
+	      limitations: capabilities.notes,
+      provenance: this.makeProvenance("none", false, [
+        "Resolved locally without fetching remote content.",
+        "Universal source support is exposed through the core MCP server, so Claude and Codex use the same tools.",
+      ]),
+    };
+  }
+
+  async searchVideoSources(input: SearchVideoSourcesInput, options: ServiceOptions = {}): Promise<SearchVideoSourcesOutput> {
+    const query = input.query?.trim();
+    if (!query) {
+      throw this.invalidInput("query cannot be empty");
+    }
+
+    const requestedPlatforms = input.platforms?.length
+      ? new Set(input.platforms)
+      : new Set(["youtube", "x", "instagram", "tiktok", "generic_url", "local_file"] as const);
+    const maxResults = clamp(input.maxResults ?? 8, 1, 25);
+    const results: SearchVideoSourcesOutput["results"] = [];
+    const searched: SearchVideoSourcesOutput["searched"] = [];
+    const limitations: string[] = [];
+
+    try {
+      const direct = resolveVideoSource(query);
+      if (requestedPlatforms.has(direct.platform)) {
+        return {
+          query,
+          results: [{
+            platform: direct.platform,
+            sourceId: direct.sourceId,
+            assetKey: direct.assetKey,
+            canonicalUrl: direct.canonicalUrl,
+            title: direct.titleHint,
+            matchReason: "Query is already a supported video source.",
+          }],
+          searched: [{
+            platform: direct.platform,
+            mode: direct.capabilities.search,
+            status: "ok",
+            detail: "Resolved direct URL or local file input.",
+          }],
+          limitations: direct.capabilities.notes,
+          provenance: this.makeProvenance("none", false, ["Direct source resolution; no remote search was needed."]),
+        };
+      }
+    } catch {
+      // Treat as a search query.
+    }
+
+    if (requestedPlatforms.has("youtube")) {
+      try {
+        const found = await this.findVideos({ query, maxResults }, options);
+        for (const item of found.results) {
+          results.push({
+            platform: "youtube",
+            sourceId: item.videoId,
+            assetKey: item.videoId,
+            canonicalUrl: `https://www.youtube.com/watch?v=${item.videoId}`,
+            title: item.title,
+            creator: item.channelTitle,
+            durationSec: item.durationSec,
+            matchReason: "Matched by VidLens YouTube native search.",
+          });
+        }
+        searched.push({
+          platform: "youtube",
+          mode: "native",
+          status: "ok",
+          detail: `YouTube native search returned ${found.results.length} result(s).`,
+        });
+      } catch (error) {
+        searched.push({
+          platform: "youtube",
+          mode: "native",
+          status: "partial",
+          detail: toMessage(error),
+        });
+        limitations.push("YouTube search failed; direct YouTube URLs can still be imported.");
+      }
+    }
+
+    if (input.includeLocalAssets ?? true) {
+      const localMatches = this.mediaStore.listAllAssets({ limit: 500 })
+        .filter((asset) => {
+          const haystack = [
+            asset.videoId,
+            asset.sourcePlatform,
+            asset.sourceUrl,
+            asset.sourceId,
+            asset.canonicalUrl,
+            asset.fileName,
+            typeof asset.meta?.title === "string" ? asset.meta.title : undefined,
+          ].filter(Boolean).join(" ").toLowerCase();
+          return haystack.includes(query.toLowerCase());
+        })
+        .slice(0, maxResults);
+      for (const asset of localMatches) {
+        results.push({
+          platform: (asset.sourcePlatform as SearchVideoSourcesOutput["results"][number]["platform"]) ?? "generic_url",
+          sourceId: asset.sourceId ?? asset.videoId,
+          assetKey: asset.videoId,
+          canonicalUrl: asset.canonicalUrl ?? asset.sourceUrl ?? asset.filePath,
+          title: typeof asset.meta?.title === "string" ? asset.meta.title : asset.fileName,
+          durationSec: asset.durationSec,
+          matchReason: "Matched an existing local media asset.",
+        });
+      }
+      searched.push({
+        platform: "local_assets",
+        mode: "local_index",
+        status: "ok",
+        detail: `Local media manifest search returned ${localMatches.length} result(s).`,
+      });
+    }
+
+    const webSearchSelection = selectWebSearchProvider(process.env);
+    for (const platform of ["x", "instagram", "tiktok", "generic_url"] as const) {
+      if (!requestedPlatforms.has(platform)) continue;
+      if (this.isDryRun(options)) {
+        const sample = sampleSourceForPlatform(platform, query);
+        results.push({
+          platform,
+          sourceId: sample.sourceId,
+          assetKey: sample.assetKey,
+          canonicalUrl: sample.canonicalUrl,
+          title: sample.title,
+          matchReason: "Dry-run web-search fixture.",
+        });
+        searched.push({
+          platform,
+          mode: "web_fallback",
+          providerId: "duckduckgo_lite",
+          status: "ok",
+          detail: "Dry-run web-search fixture returned a canonical sample URL.",
+        });
+        continue;
+      }
+
+      const provider = webSearchSelection.provider;
+      if (!provider) {
+        searched.push({
+          platform,
+          mode: "web_fallback",
+          status: "skipped",
+          detail: webSearchSelection.details.join(" ") || "Web-search fallback is not configured.",
+        });
+        continue;
+      }
+
+      try {
+        const webResults = await provider.search(query, {
+          sites: sitesForPlatform(platform),
+          maxResults,
+          platform,
+        });
+        let accepted = 0;
+        for (const item of webResults) {
+          try {
+            const source = resolveVideoSource(item.url);
+            if (source.platform !== platform) {
+              continue;
+            }
+            results.push({
+              platform,
+              sourceId: source.sourceId,
+              assetKey: source.assetKey,
+              canonicalUrl: source.canonicalUrl,
+              title: item.title ?? source.titleHint,
+              matchReason: `Matched by ${provider.id} web-search fallback.`,
+            });
+            accepted += 1;
+          } catch {
+            // Ignore non-video search results.
+          }
+        }
+        searched.push({
+          platform,
+          mode: "web_fallback",
+          providerId: provider.id,
+          status: accepted > 0 ? "ok" : "partial",
+          detail: `${provider.id} returned ${accepted} canonical ${platform} result(s).`,
+        });
+        limitations.push(...provider.limitations);
+      } catch (error) {
+        searched.push({
+          platform,
+          mode: "web_fallback",
+          providerId: provider.id,
+          status: "partial",
+          detail: redactError(error),
+        });
+      }
+    }
+
+    limitations.push(
+      "Cross-platform social search is capability-based: YouTube is native, local assets are searched locally, and social/web sources currently import best from direct URLs.",
+    );
+
+    return {
+      query,
+      results: results.slice(0, maxResults),
+      searched,
+      limitations: dedupeStrings(limitations),
+      provenance: this.makeProvenance("none", searched.some((item) => item.status !== "ok"), searched.map((item) => `${item.platform}: ${item.detail}`)),
+    };
+  }
+
+  async findSourcedVideos(input: SearchVideoSourcesInput, options: ServiceOptions = {}): Promise<SearchVideoSourcesOutput> {
+    return this.searchVideoSources(input, options);
+  }
+
+  async exploreSourcedVideos(
+    input: SearchVideoSourcesInput & { includePlatforms?: SearchVideoSourcesInput["platforms"] },
+    options: ServiceOptions = {},
+  ): Promise<SearchVideoSourcesOutput> {
+    return this.searchVideoSources({
+      query: input.query,
+      platforms: input.includePlatforms ?? input.platforms,
+      maxResults: input.maxResults ?? 8,
+      includeLocalAssets: input.includeLocalAssets,
+    }, options);
+  }
+
+  async importVideoSources(input: ImportVideoSourcesInput, options: ServiceOptions = {}): Promise<ImportVideoSourcesOutput> {
+    if (!Array.isArray(input.sources) || input.sources.length === 0) {
+      throw this.invalidInput("sources must contain at least one video URL or local file path.");
+    }
+
+    const imported: ImportVideoSourcesOutput["imported"] = [];
+    const failures: ImportVideoSourcesOutput["failures"] = [];
+    const limitations: string[] = [];
+
+    for (const raw of input.sources.slice(0, 25)) {
+      try {
+        const source = resolveVideoSource(raw);
+        const download = await this.downloadAsset({
+          videoIdOrUrl: raw,
+          format: input.downloadFormat ?? "worst_video",
+          maxSizeMb: input.maxSizeMb,
+        }, options);
+
+        let indexedFrames: number | undefined;
+        let transcriptResult: TranscribeVideoSourceOutput | undefined;
+        if (input.indexVisualContent) {
+          const indexed = await this.indexVisualContent({
+            videoIdOrUrl: raw,
+            intervalSec: input.intervalSec,
+            maxFrames: input.maxFrames,
+            autoDownload: !this.isDryRun(options),
+            downloadFormat: input.downloadFormat,
+          }, options);
+          indexedFrames = indexed.indexing.framesIndexed;
+        }
+        if (input.transcribe) {
+          transcriptResult = await this.transcribeVideoSource({
+            source: raw,
+            language: input.language,
+            sttProvider: input.sttProvider,
+            collectionId: input.collectionId,
+            activateCollection: input.activateCollection,
+          }, options);
+        }
+
+        imported.push({
+          source: summarizeSource(source),
+          assetId: download.asset.assetId,
+          filePath: download.asset.filePath,
+          indexedFrames,
+          transcriptCharacters: transcriptResult?.transcript.transcriptCharacters,
+          transcriptSegments: transcriptResult?.transcript.segmentCount,
+          collectionId: transcriptResult?.collectionId,
+        });
+        limitations.push(...source.capabilities.notes);
+      } catch (error) {
+        failures.push({ source: raw, message: toMessage(error) });
+      }
+    }
+
+    return {
+      imported,
+      failures,
+      limitations: dedupeStrings(limitations),
+      provenance: this.makeProvenance("yt_dlp", failures.length > 0, [
+        "Imported sources into the local media store.",
+        "Claude and Codex access these assets through the same MCP server.",
+      ]),
+    };
+  }
+
+  async transcribeVideoSource(input: TranscribeVideoSourceInput, options: ServiceOptions = {}): Promise<TranscribeVideoSourceOutput> {
+    const startMs = Date.now();
+    const source = resolveVideoSource(input.source);
+
+    if (this.isDryRun(options)) {
+      const transcript = {
+        ...this.sampleTranscript(source.assetKey),
+        sourceType: source.platform === "youtube" ? "manual_caption" as const : "generated_from_audio" as const,
+      };
+      return this.persistSourceTranscript(source, transcript, {
+        collectionId: input.collectionId,
+        activateCollection: input.activateCollection,
+        chunksProcessed: 1,
+        totalChunks: 1,
+        durationMs: 0,
+      });
+    }
+
+    if (source.platform === "youtube" && input.sttProvider !== "openai" && input.sttProvider !== "gemini" && input.sttProvider !== "whisper-cpp") {
+      const transcript = await this.fetchTranscriptForIndexing(source.sourceId, input.language, options);
+      return this.persistSourceTranscript(source, transcript, {
+        collectionId: input.collectionId,
+        activateCollection: input.activateCollection,
+        chunksProcessed: 1,
+        totalChunks: 1,
+        durationMs: Date.now() - startMs,
+      });
+    }
+
+    const selection = selectSttProvider(process.env, input.sttProvider);
+    if (!selection.provider) {
+      throw this.invalidInput(`No STT provider configured for ${source.platform}. ${selection.details.join(" ")}`);
+    }
+
+    const audioAsset = await this.ensureAudioAsset(input.source);
+    const result = await selection.provider.transcribe(audioAsset.filePath, {
+      videoId: source.assetKey,
+      languageHint: input.language ?? process.env.VIDLENS_STT_LANGUAGE_HINT,
+      progressReporter: options.progressReporter,
+    });
+
+    return this.persistSourceTranscript(source, result.transcript, {
+      collectionId: input.collectionId,
+      activateCollection: input.activateCollection,
+      chunksProcessed: result.chunksProcessed,
+      totalChunks: result.totalChunks,
+      durationMs: Date.now() - startMs,
+    });
+  }
+
   // ── Media / Asset tools ──
 
   async downloadAsset(input: DownloadAssetInput, options: ServiceOptions = {}): Promise<DownloadAssetOutput> {
-    const videoId = this.requireVideoId(input.videoIdOrUrl);
+    const source = resolveVideoSource(input.videoIdOrUrl);
+    const videoId = source.assetKey;
 
     if (this.isDryRun(options)) {
       const kind = input.format === "best_audio" ? "audio" : input.format === "thumbnail" ? "thumbnail" : "video";
@@ -1371,6 +1872,10 @@ export class YouTubeService {
         asset: {
           assetId: `dry-${kind}-${videoId}`,
           videoId,
+          sourcePlatform: source.platform,
+          sourceUrl: source.sourceUrl ?? source.canonicalUrl,
+          sourceId: source.sourceId,
+          canonicalUrl: source.canonicalUrl,
           kind,
           filePath: join(this.mediaStore.videoDir(videoId), kind === "thumbnail" ? `${videoId}-thumb.${extension}` : `${videoId}.${extension}`),
           fileName: kind === "thumbnail" ? `${videoId}-thumb.${extension}` : `${videoId}.${extension}`,
@@ -1382,10 +1887,10 @@ export class YouTubeService {
         cached: false,
         provenance: this.makeProvenance("none", false, ["Dry-run media download — no files were written."]),
       };
-    }
+  }
 
     const result = await this.mediaDownloader.download({
-      videoIdOrUrl: videoId,
+      videoIdOrUrl: input.videoIdOrUrl,
       format: input.format,
       maxSizeMb: input.maxSizeMb,
     });
@@ -1394,6 +1899,10 @@ export class YouTubeService {
       asset: {
         assetId: result.asset.assetId,
         videoId: result.asset.videoId,
+        sourcePlatform: result.asset.sourcePlatform,
+        sourceUrl: result.asset.sourceUrl,
+        sourceId: result.asset.sourceId,
+        canonicalUrl: result.asset.canonicalUrl,
         kind: result.asset.kind,
         filePath: result.asset.filePath,
         fileName: result.asset.fileName,
@@ -1406,15 +1915,95 @@ export class YouTubeService {
       downloadedBytes: result.downloadedBytes,
       durationMs: result.durationMs,
       cached: result.downloadedBytes === 0,
-      provenance: this.makeProvenance("yt_dlp", false, ["Asset downloaded into the local media store."]),
+      provenance: this.makeProvenance("yt_dlp", false, [`${source.platform} asset stored locally for Claude/Codex MCP use.`]),
+    };
+	  }
+
+  private async ensureAudioAsset(sourceInput: string) {
+    const source = resolveVideoSource(sourceInput);
+    const existing = this.mediaStore.listAssetsForVideo(source.assetKey).find((asset) => asset.kind === "audio");
+    if (existing) {
+      return existing;
+    }
+    const downloaded = await this.downloadAsset({
+      videoIdOrUrl: sourceInput,
+      format: "best_audio",
+    });
+    return this.mediaStore.getAsset(downloaded.asset.assetId) ?? downloaded.asset;
+  }
+
+  private persistSourceTranscript(
+    source: VideoSourceRef,
+    transcript: TranscriptRecord,
+    options: {
+      collectionId?: string;
+      activateCollection?: boolean;
+      chunksProcessed: number;
+      totalChunks: number;
+      durationMs: number;
+    },
+  ): TranscribeVideoSourceOutput {
+    const collectionId = options.collectionId ?? `source-${source.assetKey}`;
+    const video: VideoRecord = {
+      videoId: source.assetKey,
+      title: source.titleHint ?? source.sourceId,
+      channelTitle: source.platform,
+      url: source.canonicalUrl,
+      transcriptAvailable: true,
+      transcriptLanguages: transcript.languageUsed ? [transcript.languageUsed] : undefined,
+      sourcePlatform: source.platform,
+      sourceId: source.sourceId,
+      canonicalUrl: source.canonicalUrl,
+    };
+    const stored = this.knowledgeBase.importVideos(
+      {
+        collectionId,
+        label: source.titleHint ?? `${source.platform} transcript`,
+        sourceType: "videos",
+        sourceRef: source.canonicalUrl,
+      },
+      [{
+        video,
+        transcript: {
+          ...transcript,
+          videoId: source.assetKey,
+        },
+        options: {
+          strategy: "auto",
+          chunkSizeSec: 120,
+          chunkOverlapSec: 30,
+        },
+      }],
+    );
+    const activeCollectionId = options.activateCollection === false
+      ? this.knowledgeBase.getActiveCollectionId() ?? undefined
+      : this.knowledgeBase.setActiveCollection(collectionId).activeCollectionId;
+    return {
+      source: summarizeSource(source),
+      transcript: {
+        videoId: source.assetKey,
+        languageUsed: transcript.languageUsed,
+        sourceType: transcript.sourceType,
+        confidence: transcript.confidence,
+        transcriptCharacters: transcript.transcriptText.length,
+        segmentCount: transcript.segments.length,
+        chunksProcessed: options.chunksProcessed,
+        totalChunks: options.totalChunks,
+      },
+      collectionId: stored.collectionId,
+      activeCollectionId,
+      durationMs: options.durationMs,
+      provenance: this.makeProvenance("none", false, [
+        `${source.platform} transcript stored in source-aware knowledge base.`,
+      ]),
     };
   }
 
-  async listMediaAssets(input: ListMediaAssetsInput = {}): Promise<ListMediaAssetsOutput> {
+	  async listMediaAssets(input: ListMediaAssetsInput = {}): Promise<ListMediaAssetsOutput> {
     const kind = input.kind;
     const limit = clamp(input.limit ?? 100, 1, 500);
     let assets = input.videoIdOrUrl
-      ? this.mediaStore.listAssetsForVideo(this.requireVideoId(input.videoIdOrUrl))
+      ? this.mediaStore.listAssetsForVideo(resolveVideoSource(input.videoIdOrUrl).assetKey)
       : this.mediaStore.listAllAssets({ kind, limit });
 
     if (input.videoIdOrUrl && kind) {
@@ -1429,6 +2018,10 @@ export class YouTubeService {
       assets: assets.map((asset) => ({
         assetId: asset.assetId,
         videoId: asset.videoId,
+        sourcePlatform: asset.sourcePlatform,
+        sourceUrl: asset.sourceUrl,
+        sourceId: asset.sourceId,
+        canonicalUrl: asset.canonicalUrl,
         kind: asset.kind,
         filePath: asset.filePath,
         fileName: asset.fileName,
@@ -1467,7 +2060,7 @@ export class YouTubeService {
         removed = 1;
       }
     } else if (input.videoIdOrUrl) {
-      const videoId = this.requireVideoId(input.videoIdOrUrl);
+      const videoId = resolveVideoSource(input.videoIdOrUrl).assetKey;
       const assets = this.mediaStore.listAssetsForVideo(videoId);
       freedBytes = assets.reduce((sum, asset) => sum + asset.fileSizeBytes, 0);
       removed = this.mediaStore.removeVideoAssets(videoId, deleteFiles);
@@ -1485,7 +2078,8 @@ export class YouTubeService {
   }
 
   async extractKeyframes(input: ExtractKeyframesInput, options: ServiceOptions = {}): Promise<ExtractKeyframesOutput> {
-    const videoId = this.requireVideoId(input.videoIdOrUrl);
+    const source = resolveVideoSource(input.videoIdOrUrl);
+    const videoId = source.assetKey;
 
     if (this.isDryRun(options)) {
       return {
@@ -1495,6 +2089,14 @@ export class YouTubeService {
         durationMs: 0,
         provenance: this.makeProvenance("none", false, ["Dry-run keyframe extraction — ffmpeg was not invoked."]),
       };
+    }
+
+    const hasVideoAsset = this.mediaStore.listAssetsForVideo(videoId).some((asset) => asset.kind === "video");
+    if (!hasVideoAsset && source.platform === "local_file") {
+      await this.mediaDownloader.download({
+        videoIdOrUrl: input.videoIdOrUrl,
+        format: "worst_video",
+      });
     }
 
     const result = await this.thumbnailExtractor.extractKeyframes({
@@ -1565,17 +2167,21 @@ export class YouTubeService {
   }
 
   async indexVisualContent(input: IndexVisualContentInput, options: ServiceOptions = {}): Promise<IndexVisualContentOutput> {
-    const videoId = this.requireVideoId(input.videoIdOrUrl);
+    const source = resolveVideoSource(input.videoIdOrUrl);
+    const videoId = source.assetKey;
 
     if (this.isDryRun(options)) {
       return this.sampleVisualIndex(videoId);
     }
 
-    const sourceVideo = await this.inspectVideo({ videoIdOrUrl: videoId }, options).catch(() => undefined);
+    const sourceVideo = source.platform === "youtube"
+      ? await this.inspectVideo({ videoIdOrUrl: source.sourceId }, options).catch(() => undefined)
+      : undefined;
     const indexed = await this.visualSearch.indexVideo({
       videoId,
       sourceVideoTitle: sourceVideo?.video.title,
-      sourceVideoUrl: `https://www.youtube.com/watch?v=${videoId}`,
+      sourceVideoUrl: source.canonicalUrl,
+      downloadSource: input.videoIdOrUrl,
       intervalSec: input.intervalSec,
       maxFrames: input.maxFrames,
       imageFormat: input.imageFormat,
@@ -1633,7 +2239,8 @@ export class YouTubeService {
       throw this.invalidInput("query cannot be empty");
     }
 
-    const videoId = input.videoIdOrUrl ? this.requireVideoId(input.videoIdOrUrl) : undefined;
+    const source = input.videoIdOrUrl ? resolveVideoSource(input.videoIdOrUrl) : undefined;
+    const videoId = source?.assetKey;
 
     if (this.isDryRun(options)) {
       return this.sampleVisualSearch(query, videoId);
@@ -1654,6 +2261,8 @@ export class YouTubeService {
         downloadFormat: input.downloadFormat,
         includeGeminiDescriptions: input.includeGeminiDescriptions,
         includeGeminiEmbeddings: input.includeGeminiEmbeddings,
+        sourceVideoUrl: source?.canonicalUrl,
+        downloadSource: input.videoIdOrUrl,
       },
     });
 
@@ -1675,7 +2284,7 @@ export class YouTubeService {
         "Search ran over the visual frame index, not transcript embeddings.",
         "Each match includes a local frame path and timestamp for direct visual evidence.",
         result.embeddingProvider !== "none"
-          ? `Gemini semantic retrieval active (${result.embeddingModel ?? "gemini-embedding-2-preview"}).`
+          ? `Gemini semantic retrieval active (${result.embeddingModel ?? "gemini-embedding-001"}).`
           : result.descriptionProvider !== "none"
             ? "Gemini frame descriptions enhance lexical search but no embedding retrieval."
             : "Current index has OCR-backed lexical matches only.",
@@ -1692,7 +2301,7 @@ export class YouTubeService {
       return this.sampleSimilarFrames(input.assetId, input.framePath);
     }
 
-    const videoId = input.videoIdOrUrl ? this.requireVideoId(input.videoIdOrUrl) : undefined;
+    const videoId = input.videoIdOrUrl ? resolveVideoSource(input.videoIdOrUrl).assetKey : undefined;
     const result = await this.visualSearch.findSimilarFrames({
       assetId: input.assetId,
       framePath: input.framePath,
@@ -2526,20 +3135,21 @@ export class YouTubeService {
     let skipped = 0;
 
     // Phase 1: synchronous filtering
-    const toProcess: Array<{ videoId: string }> = [];
-    for (const raw of videoIdsOrUrls) {
-      let videoId: string;
-      try {
-        videoId = this.requireVideoId(raw);
-      } catch (error) {
-        failures.push({
-          videoId: raw,
+	    const toProcess: Array<{ videoId: string; source: VideoSourceRef }> = [];
+	    for (const raw of videoIdsOrUrls) {
+	      let source: VideoSourceRef;
+	      try {
+	        source = resolveVideoSource(raw);
+	      } catch (error) {
+	        failures.push({
+	          videoId: raw,
           reason: error instanceof Error ? error.message : String(error),
         });
-        continue;
-      }
+	        continue;
+	      }
+	      const videoId = source.platform === "youtube" ? source.sourceId : source.assetKey;
 
-      if (seen.has(videoId)) {
+	      if (seen.has(videoId)) {
         skipped += 1;
         continue;
       }
@@ -2550,17 +3160,19 @@ export class YouTubeService {
         continue;
       }
 
-      toProcess.push({ videoId });
-    }
+	      toProcess.push({ videoId, source });
+	    }
 
     // Phase 2: parallel fetch in batches of 5
-    const batchResults = await this.batchWithConcurrency(toProcess, 5, async ({ videoId }) => {
-      try {
-        const [video, transcript] = await Promise.all([
-          this.fetchVideoInfoForIndexing(videoId, options),
-          this.fetchTranscriptForIndexing(videoId, config.language, options),
-        ]);
-        return {
+	    const batchResults = await this.batchWithConcurrency(toProcess, 5, async ({ videoId, source }) => {
+	      try {
+	        const [video, transcript] = source.platform === "youtube"
+	          ? await Promise.all([
+	            this.fetchVideoInfoForIndexing(videoId, options),
+	            this.fetchTranscriptForIndexing(videoId, config.language, options),
+	          ])
+	          : await this.fetchSourceInfoAndTranscriptForIndexing(source, config.language, options);
+	        return {
           success: true as const,
           videoId,
           video,
@@ -2613,7 +3225,7 @@ export class YouTubeService {
     return resolved.data;
   }
 
-  private async fetchTranscriptForIndexing(videoId: string, language: string | undefined, options: ServiceOptions): Promise<TranscriptRecord> {
+	  private async fetchTranscriptForIndexing(videoId: string, language: string | undefined, options: ServiceOptions): Promise<TranscriptRecord> {
     const resolved = await this.executeFallback(
       {
         yt_dlp: () => this.ytdlp.transcript(videoId, language),
@@ -2622,7 +3234,32 @@ export class YouTubeService {
       options,
       { partialTiers: [] },
     );
-    return resolved.data;
+	    return resolved.data;
+	  }
+
+  private async fetchSourceInfoAndTranscriptForIndexing(
+    source: VideoSourceRef,
+    language: string | undefined,
+    options: ServiceOptions,
+  ): Promise<[VideoRecord, TranscriptRecord]> {
+    if (this.isDryRun(options)) {
+      const transcript = {
+        ...this.sampleTranscript(source.assetKey),
+        sourceType: "generated_from_audio" as const,
+      };
+      return [videoRecordForSource(source), { ...transcript, videoId: source.assetKey }];
+    }
+    const selection = selectSttProvider(process.env);
+    if (!selection.provider) {
+      throw new Error(`No STT provider configured for ${source.platform}. ${selection.details.join(" ")}`);
+    }
+    const audioAsset = await this.ensureAudioAsset(source.input);
+    const result = await selection.provider.transcribe(audioAsset.filePath, {
+      videoId: source.assetKey,
+      languageHint: language ?? process.env.VIDLENS_STT_LANGUAGE_HINT,
+      progressReporter: options.progressReporter,
+    });
+    return [videoRecordForSource(source), result.transcript];
   }
 
   private defaultVideoCollectionId(input: VideoKnowledgeBaseInput): string {
@@ -3374,9 +4011,15 @@ export class YouTubeService {
         youtubeApiConfigured: Boolean(process.env.YOUTUBE_API_KEY),
         geminiConfigured: Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY),
       },
+      ffmpeg: {
+        available: true,
+        ffmpegVersion: "dry-run",
+        ffprobeVersion: "dry-run",
+      },
       clients: detectKnownClients(),
       checks: [
         { name: "yt_dlp", status: "ok", detail: "Dry-run assumes yt-dlp is available." },
+        { name: "ffmpeg", status: "ok", detail: "Dry-run assumes ffmpeg/ffprobe are available." },
         { name: "youtube_api", status: "skipped", detail: "Dry-run skipped live API validation." },
         { name: "gemini_embeddings", status: "skipped", detail: "Dry-run skipped live Gemini validation." },
         { name: "storage", status: "ok", detail: `Dry-run data directory available (${this.knowledgeBase.dataDir}).` },
@@ -3405,7 +4048,7 @@ export class YouTubeService {
         descriptionProvider: "gemini",
         descriptionModel: process.env.VIDLENS_GEMINI_VISION_MODEL || "gemini-2.5-flash",
         embeddingProvider: "gemini",
-        embeddingModel: process.env.YOUTUBE_MCP_GEMINI_MODEL || "gemini-embedding-2-preview",
+        embeddingModel: process.env.VIDLENS_GEMINI_EMBEDDING_MODEL || process.env.YOUTUBE_MCP_GEMINI_MODEL || "gemini-embedding-001",
         embeddingDimensions: 768,
       },
       evidence: [
@@ -3484,7 +4127,7 @@ export class YouTubeService {
         searchedVideos: 1,
         descriptionProvider: "gemini",
         embeddingProvider: "gemini",
-        embeddingModel: process.env.YOUTUBE_MCP_GEMINI_MODEL || "gemini-embedding-2-preview",
+        embeddingModel: process.env.VIDLENS_GEMINI_EMBEDDING_MODEL || process.env.YOUTUBE_MCP_GEMINI_MODEL || "gemini-embedding-001",
         queryMode: "gemini_semantic_plus_lexical",
       },
       coveredTimeRange: { startSec: 0, endSec: 120 },
@@ -3814,6 +4457,86 @@ function buildExploreLimitations(mode: string, depth: string, candidateCount: nu
   return limitations;
 }
 
+function summarizeSource(source: VideoSourceRef): InspectVideoSourceOutput["source"] {
+  return {
+    input: source.input,
+    platform: source.platform,
+    sourceId: source.sourceId,
+    assetKey: source.assetKey,
+    canonicalUrl: source.canonicalUrl,
+    sourceUrl: source.sourceUrl,
+    localPath: source.localPath,
+    titleHint: source.titleHint,
+    capabilities: source.capabilities,
+  };
+}
+
+function videoRecordForSource(source: VideoSourceRef): VideoRecord {
+  return {
+    videoId: source.assetKey,
+    title: source.titleHint ?? source.sourceId,
+    channelTitle: source.platform,
+    url: source.canonicalUrl,
+    transcriptAvailable: source.capabilities.transcript,
+    transcriptLanguages: undefined,
+    sourcePlatform: source.platform,
+    sourceId: source.sourceId,
+    canonicalUrl: source.canonicalUrl,
+  };
+}
+
+function sitesForPlatform(platform: "x" | "instagram" | "tiktok" | "generic_url"): string[] {
+  switch (platform) {
+    case "x":
+      return ["x.com", "twitter.com"];
+    case "instagram":
+      return ["instagram.com"];
+    case "tiktok":
+      return ["tiktok.com"];
+    case "generic_url":
+      return ["vimeo.com", "dailymotion.com"];
+  }
+}
+
+function sampleSourceForPlatform(platform: "x" | "instagram" | "tiktok" | "generic_url", query: string): {
+  sourceId: string;
+  assetKey: string;
+  canonicalUrl: string;
+  title: string;
+} {
+  const slug = query.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32) || "sample";
+  switch (platform) {
+    case "x":
+      return {
+        sourceId: "1234567890123456789",
+        assetKey: "x_1234567890123456789",
+        canonicalUrl: "https://x.com/vidlens/status/1234567890123456789",
+        title: `Dry-run X result for ${slug}`,
+      };
+    case "instagram":
+      return {
+        sourceId: "C0DEVIDLENS",
+        assetKey: "instagram_c0devidlens",
+        canonicalUrl: "https://www.instagram.com/reel/C0DEVIDLENS",
+        title: `Dry-run Instagram result for ${slug}`,
+      };
+    case "tiktok":
+      return {
+        sourceId: "7350000000000000000",
+        assetKey: "tiktok_7350000000000000000",
+        canonicalUrl: "https://www.tiktok.com/@vidlens/video/7350000000000000000",
+        title: `Dry-run TikTok result for ${slug}`,
+      };
+    case "generic_url":
+      return {
+        sourceId: "dryrun-video",
+        assetKey: "web_dryrun-video",
+        canonicalUrl: "https://vimeo.com/123456789",
+        title: `Dry-run generic video result for ${slug}`,
+      };
+  }
+}
+
 /** Extract structured benchmark numbers from transcript text for chart rendering. */
 function extractBenchmarkData(
   text: string,
@@ -3895,4 +4618,14 @@ function detectProductInContext(text: string, label: string, results: ExploreYou
   const window = text.slice(Math.max(0, idx - 100), idx + label.length + 100);
   const products = window.match(/M\d+\s*(?:Max|Pro|Ultra)?|M\d+|iPhone\s*\d+\s*(?:Pro)?|RTX\s*\d+|RX\s*\d+/gi);
   return products?.[0] ?? results[0]?.video.title.slice(0, 30);
+}
+
+function ffmpegInstallHint(platform: NodeJS.Platform): string {
+  if (platform === "darwin") {
+    return "brew install ffmpeg";
+  }
+  if (platform === "win32") {
+    return "winget install Gyan.FFmpeg";
+  }
+  return "sudo apt install ffmpeg";
 }

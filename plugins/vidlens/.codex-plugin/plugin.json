@@ -1,0 +1,48 @@
+{
+  "name": "vidlens",
+  "version": "1.3.0",
+  "description": "Video intelligence for Codex and MCP clients: search, import, download, index, and visually search YouTube, social video URLs, generic URLs, and local video files.",
+  "author": {
+    "name": "Rajan",
+    "url": "https://github.com/thatsrajan"
+  },
+  "homepage": "https://github.com/thatsrajan/vidlens-mcp",
+  "repository": "https://github.com/thatsrajan/vidlens-mcp",
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "video",
+    "youtube",
+    "tiktok",
+    "instagram",
+    "x",
+    "visual-search",
+    "codex"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "VidLens",
+    "shortDescription": "Search and index video as local assets",
+    "longDescription": "VidLens turns online and local videos into searchable local assets for AI agents. It supports YouTube plus universal video source ingestion through the same MCP server used by Claude and Codex, with yt-dlp downloads, ffmpeg frame extraction, Apple Vision OCR/similarity, and optional Gemini descriptions and embeddings.",
+    "developerName": "Rajan",
+    "category": "Research",
+    "capabilities": [
+      "Read",
+      "Write",
+      "Interactive"
+    ],
+    "websiteURL": "https://github.com/thatsrajan/vidlens-mcp",
+    "privacyPolicyURL": "https://github.com/thatsrajan/vidlens-mcp",
+    "termsOfServiceURL": "https://github.com/thatsrajan/vidlens-mcp/blob/main/LICENSE",
+    "defaultPrompt": [
+      "Import this video and make it searchable",
+      "Search my local video assets",
+      "Find frames showing the benchmark chart"
+    ],
+    "brandColor": "#EF4444",
+    "composerIcon": "./assets/logo.png",
+    "logo": "./assets/logo.png",
+    "screenshots": []
+  }
+}

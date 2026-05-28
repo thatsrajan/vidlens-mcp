@@ -14,7 +14,9 @@ export interface EmbeddingProvider {
   embedQuery(text: string): Promise<number[]>;
 }
 
-const DEFAULT_GEMINI_MODEL = process.env.YOUTUBE_MCP_GEMINI_MODEL || "gemini-embedding-2-preview";
+const DEFAULT_GEMINI_MODEL = process.env.VIDLENS_GEMINI_EMBEDDING_MODEL
+  || process.env.YOUTUBE_MCP_GEMINI_MODEL
+  || "gemini-embedding-001";
 const DEFAULT_GEMINI_DIMENSIONS = Number(process.env.YOUTUBE_MCP_GEMINI_DIMENSIONS || 768);
 const GEMINI_PROVIDER_CACHE = new Map<string, Promise<EmbeddingProvider | null>>();
 

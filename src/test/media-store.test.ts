@@ -216,3 +216,30 @@ test("MediaStore: register with metadata JSON", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("MediaStore: source metadata round-trips without breaking legacy videoId", () => {
+  const { store, dir } = createTempStore();
+  try {
+    const d = join(dir, "files", "x_123");
+    const asset = store.registerAsset({
+      videoId: "x_123",
+      sourcePlatform: "x",
+      sourceUrl: "https://x.com/openai/status/123",
+      sourceId: "123",
+      canonicalUrl: "https://x.com/openai/status/123",
+      kind: "video",
+      filePath: createFakeFile(d, "x_123.mp4"),
+    });
+
+    const fetched = store.getAsset(asset.assetId);
+    assert.ok(fetched);
+    assert.equal(fetched.videoId, "x_123");
+    assert.equal(fetched.sourcePlatform, "x");
+    assert.equal(fetched.sourceUrl, "https://x.com/openai/status/123");
+    assert.equal(fetched.sourceId, "123");
+    assert.equal(fetched.canonicalUrl, "https://x.com/openai/status/123");
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

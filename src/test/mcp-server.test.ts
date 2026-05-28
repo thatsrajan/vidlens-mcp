@@ -32,6 +32,11 @@ test("public MCP surface uses intent-based tool names", () => {
     // Trends & Discovery
     "discoverNicheTrends",
     "exploreNicheCompetitors",
+    // Universal Video Sources
+    "inspectVideoSource",
+    "searchVideoSources",
+    "importVideoSources",
+    "transcribeVideoSource",
     // Media / Asset tools
     "downloadAsset",
     "listMediaAssets",
@@ -52,6 +57,25 @@ test("public MCP surface uses intent-based tool names", () => {
     // Explore
     "exploreYouTube",
   ]);
+});
+
+test("universal video tools are exposed through the plain MCP surface for Claude and Codex", () => {
+  const inspectTool = tools.find((t) => t.name === "inspectVideoSource");
+  assert.ok(inspectTool, "inspectVideoSource tool should exist");
+  assert.deepEqual((inspectTool.inputSchema as any).required, ["source"]);
+
+  const searchTool = tools.find((t) => t.name === "searchVideoSources");
+  assert.ok(searchTool, "searchVideoSources tool should exist");
+  assert.deepEqual((searchTool.inputSchema as any).required, ["query"]);
+
+  const importTool = tools.find((t) => t.name === "importVideoSources");
+  assert.ok(importTool, "importVideoSources tool should exist");
+  assert.deepEqual((importTool.inputSchema as any).required, ["sources"]);
+  assert.ok((importTool.inputSchema as any).properties.transcribe, "importVideoSources should expose transcribe flag");
+
+  const transcribeTool = tools.find((t) => t.name === "transcribeVideoSource");
+  assert.ok(transcribeTool, "transcribeVideoSource tool should exist");
+  assert.deepEqual((transcribeTool.inputSchema as any).required, ["source"]);
 });
 
 test("media and visual tools have correct required fields", () => {

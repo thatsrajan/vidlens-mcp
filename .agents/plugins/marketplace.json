@@ -1,0 +1,20 @@
+{
+  "name": "vidlens-local",
+  "interface": {
+    "displayName": "VidLens Local"
+  },
+  "plugins": [
+    {
+      "name": "vidlens",
+      "source": {
+        "source": "local",
+        "path": "./plugins/vidlens"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Research"
+    }
+  ]
+}

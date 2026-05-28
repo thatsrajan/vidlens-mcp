@@ -41,6 +41,7 @@ export interface IndexVisualContentParams {
   videoId: string;
   sourceVideoTitle?: string;
   sourceVideoUrl?: string;
+  downloadSource?: string;
   intervalSec?: number;
   maxFrames?: number;
   imageFormat?: "jpg" | "png" | "webp";
@@ -410,7 +411,7 @@ export class VisualSearchEngine {
     let videoAssetPath = this.findVideoAsset(videoId)?.filePath;
     if (!videoAssetPath && (params.autoDownload ?? true)) {
       const download = await this.mediaDownloader.download({
-        videoIdOrUrl: videoId,
+        videoIdOrUrl: params.downloadSource ?? videoId,
         format: params.downloadFormat ?? "worst_video",
       });
       videoAssetPath = download.asset.filePath;

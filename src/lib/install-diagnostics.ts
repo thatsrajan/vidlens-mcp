@@ -63,7 +63,9 @@ export function detectKnownClients(options: DetectClientsOptions = {}): ClientDe
   const chatgptDesktopDetected = pathExists(chatgptDesktopApp) || discoveredChatGptPaths.length > 0;
 
   const codexBinary = commandOnPath("codex", env, platform);
-  const codexDetected = Boolean(codexBinary);
+  const codexConfig = resolveCodexConfigPath(homeDir);
+  const codexDesktopApp = platform === "darwin" ? "/Applications/Codex.app" : undefined;
+  const codexDetected = Boolean(codexBinary || pathExists(codexConfig) || pathExists(codexDesktopApp));
 
   return [
     {
@@ -150,14 +152,20 @@ export function detectKnownClients(options: DetectClientsOptions = {}): ClientDe
       clientId: "codex",
       name: "Codex",
       detected: codexDetected,
-      supportLevel: "scaffolded",
-      installSurface: "binary",
+      supportLevel: "supported",
+      installSurface: "mixed",
+      configPath: codexConfig,
       binary: codexBinary,
       notes: [
         codexBinary
           ? `CLI detected on PATH (${codexBinary}).`
           : "CLI not detected on PATH.",
-        "Codex config/install flow is documented as a target, but not yet auto-configured.",
+        pathExists(codexConfig)
+          ? `Codex config detected (${codexConfig}).`
+          : "Codex config not detected yet; setup can target this path.",
+        codexDesktopApp && pathExists(codexDesktopApp)
+          ? `App bundle detected (${basename(codexDesktopApp)}).`
+          : "App bundle not detected on default path.",
       ],
     },
   ];
@@ -221,6 +229,14 @@ export function resolveClaudeDesktopConfigPath(homeDir: string, platform: NodeJS
 
 export function resolveClaudeCodeUserConfigPath(homeDir: string): string {
   return join(homeDir, ".claude", "settings.json");
+}
+
+export function resolveClaudeCodeRegistryPath(homeDir: string): string {
+  return join(homeDir, ".claude.json");
+}
+
+export function resolveCodexConfigPath(homeDir: string): string {
+  return join(homeDir, ".codex", "config.toml");
 }
 
 export function resolveClaudeCodeProjectConfigPath(cwd: string): string {
