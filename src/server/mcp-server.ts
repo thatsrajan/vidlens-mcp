@@ -17,6 +17,8 @@ import { ThumbnailExtractor } from "../lib/thumbnail-extractor.js";
 import { parseVideoId } from "../lib/id-parsing.js";
 import { generateVisualReport, openInBrowser, type VisualReportFrame } from "../lib/visual-report.js";
 import { Telemetry } from "../lib/telemetry.js";
+import type { ProgressReporter } from "../lib/progress.js";
+import type { ServiceOptions } from "../lib/types.js";
 
 export const tools: Tool[] = [
   {
@@ -445,14 +447,89 @@ export const tools: Tool[] = [
       additionalProperties: false,
     },
   },
-  // ── Media / Asset tools ──────────────────────────────────────
+  // ── Universal Video Sources ──────────────────────────────────
   {
-    name: "downloadAsset",
-    description: "Download a YouTube video, audio track, or thumbnail to local storage. Returns asset manifest entry with file path. Does NOT perform visual indexing — this is honest file storage. [~30-120s, downloads media]",
+    name: "inspectVideoSource",
+    description: "Resolve any supported video input (YouTube, X/Twitter, Instagram, TikTok, generic URL, or local file) into VidLens source metadata and capability flags. Works for Claude and Codex through the same MCP server. [~instant]",
     inputSchema: {
       type: "object",
       properties: {
-        videoIdOrUrl: { type: "string", description: "YouTube video ID or URL" },
+        source: { type: "string", description: "Video URL, YouTube ID, or local video file path" },
+        dryRun: { type: "boolean" },
+      },
+      required: ["source"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "searchVideoSources",
+    description: "Search video sources across native YouTube, local VidLens assets, and capability-aware social/web fallback guidance. For X, Instagram, TikTok, and generic web pages, pass discovered URLs to importVideoSources/downloadAsset for reliable ingest. [~1-5s]",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search query, direct video URL, or local file path" },
+        platforms: {
+          type: "array",
+          items: { type: "string", enum: ["youtube", "x", "instagram", "tiktok", "generic_url", "local_file"] },
+          description: "Optional platform filter",
+        },
+        maxResults: { type: "number", minimum: 1, maximum: 25 },
+        includeLocalAssets: { type: "boolean", description: "Search existing local VidLens assets too (default true)" },
+        dryRun: { type: "boolean" },
+      },
+      required: ["query"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "importVideoSources",
+    description: "Import one or more video URLs or local files into the local VidLens media store, optionally building a visual index or transcript. Supports YouTube, X/Twitter, Instagram, TikTok, generic URLs via yt-dlp, and local video files via ffmpeg. [~30-180s]",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sources: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 25 },
+        downloadFormat: { type: "string", enum: ["best_video", "worst_video"], description: "Video quality to store locally (default worst_video)" },
+        maxSizeMb: { type: "number", minimum: 1, maximum: 5000 },
+        indexVisualContent: { type: "boolean", description: "Build OCR/Apple Vision/Gemini visual index after import" },
+        transcribe: { type: "boolean", description: "Also transcribe imported sources and add them to the transcript knowledge base" },
+        language: { type: "string" },
+        sttProvider: { type: "string", enum: ["auto", "whisper-cpp", "gemini", "openai"] },
+        collectionId: { type: "string" },
+        activateCollection: { type: "boolean" },
+        intervalSec: { type: "number", minimum: 2, maximum: 3600 },
+        maxFrames: { type: "number", minimum: 1, maximum: 100 },
+        dryRun: { type: "boolean" },
+      },
+      required: ["sources"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "transcribeVideoSource",
+    description: "Transcribe a YouTube, X/Twitter, Instagram, TikTok, generic URL, or local video source into the transcript knowledge base using native captions or the configured STT provider. [~30-180s]",
+    inputSchema: {
+      type: "object",
+      properties: {
+        source: { type: "string", description: "Video URL, YouTube ID, or local video file path" },
+        language: { type: "string" },
+        sttProvider: { type: "string", enum: ["auto", "whisper-cpp", "gemini", "openai"] },
+        forceReindex: { type: "boolean" },
+        collectionId: { type: "string" },
+        activateCollection: { type: "boolean" },
+        dryRun: { type: "boolean" },
+      },
+      required: ["source"],
+      additionalProperties: false,
+    },
+  },
+  // ── Media / Asset tools ──────────────────────────────────────
+  {
+    name: "downloadAsset",
+    description: "Download or ingest a video, audio track, or thumbnail to local storage. Supports YouTube, X/Twitter, Instagram, TikTok, generic URLs via yt-dlp, and local video files for video ingestion. Does NOT perform visual indexing. [~30-120s, downloads media]",
+    inputSchema: {
+      type: "object",
+      properties: {
+        videoIdOrUrl: { type: "string", description: "Video ID, URL, or local video file path" },
         format: {
           type: "string",
           enum: ["best_video", "best_audio", "thumbnail", "worst_video"],
@@ -686,15 +763,60 @@ export const tools: Tool[] = [
   },
 ];
 
+if (process.env.VIDLENS_ENABLE_UNIVERSAL_EXPLORE === "1") {
+  tools.push(
+    {
+      name: "findSourcedVideos",
+      description: "Opt-in universal video search across YouTube, local assets, and configured social/web fallback providers. Set VIDLENS_ENABLE_UNIVERSAL_EXPLORE=1 to expose. [~1-5s]",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+          platforms: {
+            type: "array",
+            items: { type: "string", enum: ["youtube", "x", "instagram", "tiktok", "generic_url", "local_file"] },
+          },
+          maxResults: { type: "number", minimum: 1, maximum: 25 },
+          includeLocalAssets: { type: "boolean" },
+          dryRun: { type: "boolean" },
+        },
+        required: ["query"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "exploreSourcedVideos",
+      description: "Opt-in universal exploration surface that routes through source search and merges platform discovery results. Set VIDLENS_ENABLE_UNIVERSAL_EXPLORE=1 to expose. [~1-5s]",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+          includePlatforms: {
+            type: "array",
+            items: { type: "string", enum: ["youtube", "x", "instagram", "tiktok", "generic_url", "local_file"] },
+          },
+          maxResults: { type: "number", minimum: 1, maximum: 25 },
+          includeLocalAssets: { type: "boolean" },
+          dryRun: { type: "boolean" },
+        },
+        required: ["query"],
+        additionalProperties: false,
+      },
+    },
+  );
+}
+
 const TIMING_TIER: Record<string, string> = {
   findVideos: "fast", inspectVideo: "fast", readTranscript: "fast", readComments: "fast",
   expandPlaylist: "fast", checkImportReadiness: "fast",
   inspectChannel: "medium", listChannelCatalog: "medium", measureAudienceSentiment: "medium",
   buildVideoDossier: "medium", checkSystemHealth: "medium", researchTagsAndTitles: "medium",
   compareShortsVsLong: "medium", recommendUploadWindows: "medium", scoreHookPatterns: "medium",
+  searchVideoSources: "medium", findSourcedVideos: "medium", exploreSourcedVideos: "medium",
   importComments: "medium",
   analyzeVideoSet: "slow", analyzePlaylist: "slow", importPlaylist: "slow", importVideos: "slow",
   discoverNicheTrends: "slow", exploreNicheCompetitors: "slow", exploreYouTube: "slow",
+  importVideoSources: "slow", transcribeVideoSource: "slow",
   downloadAsset: "heavy", extractKeyframes: "heavy", indexVisualContent: "heavy",
   searchVisualContent: "heavy", findSimilarFrames: "heavy",
   listCollections: "instant", setActiveCollection: "instant", clearActiveCollection: "instant",
@@ -702,6 +824,7 @@ const TIMING_TIER: Record<string, string> = {
   clearActiveCommentCollection: "instant", removeCollection: "instant",
   removeCommentCollection: "instant", removeMediaAsset: "instant", listMediaAssets: "instant",
   mediaStoreHealth: "instant", searchTranscripts: "instant", searchComments: "instant",
+  inspectVideoSource: "instant",
 };
 
 export function createYouTubeMcpServer(service = new YouTubeService()): Server {
@@ -719,7 +842,7 @@ export function createYouTubeMcpServer(service = new YouTubeService()): Server {
   const server = new Server(
     {
       name: "vidlens-mcp",
-      version: "0.3.0",
+      version: "1.3.0",
     },
     {
       capabilities: {
@@ -730,15 +853,19 @@ export function createYouTubeMcpServer(service = new YouTubeService()): Server {
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
 
-  server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest): Promise<CallToolResult> => {
+  server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest, extra): Promise<CallToolResult> => {
     const args = parseArgs(request.params.arguments);
     const dryRun = readBoolean(args, "dryRun", false);
     const toolName = request.params.name;
     const t0 = Date.now();
+    const serviceOptions: ServiceOptions = {
+      dryRun,
+      progressReporter: progressReporterFromExtra(extra),
+    };
 
     try {
       const result = await executeTool(
-        service, toolName, args, dryRun,
+        service, toolName, args, serviceOptions,
         getMediaStore, getMediaDownloader, getThumbnailExtractor,
       );
 
@@ -882,11 +1009,31 @@ export async function startStdioServer(service?: YouTubeService): Promise<void> 
   await server.connect(transport);
 }
 
+function progressReporterFromExtra(extra: any): ProgressReporter | undefined {
+  const progressToken = extra._meta?.progressToken;
+  if (progressToken === undefined) {
+    return undefined;
+  }
+  return {
+    report: async (event) => {
+      await extra.sendNotification?.({
+        method: "notifications/progress",
+        params: {
+          progressToken,
+          progress: event.current,
+          total: event.total,
+          message: event.message ?? event.phase,
+        },
+      });
+    },
+  };
+}
+
 async function executeTool(
   service: YouTubeService,
   toolName: string,
   args: Record<string, unknown>,
-  dryRun: boolean,
+  serviceOptions: ServiceOptions,
   getMediaStore: () => MediaStore,
   getMediaDownloader: () => MediaDownloader,
   getThumbnailExtractor: () => ThumbnailExtractor,
@@ -904,7 +1051,7 @@ async function executeTool(
           channelId: optionalString(args, "channelId"),
           duration: optionalEnum(args, "duration", ["any", "short", "medium", "long"]),
         },
-        { dryRun },
+        serviceOptions,
       );
 
     case "inspectVideo":
@@ -914,7 +1061,7 @@ async function executeTool(
           includeTranscriptMeta: optionalBoolean(args, "includeTranscriptMeta"),
           includeEngagementRatios: optionalBoolean(args, "includeEngagementRatios"),
         },
-        { dryRun },
+        serviceOptions,
       );
 
     case "inspectChannel":
@@ -922,7 +1069,7 @@ async function executeTool(
         {
           channelIdOrHandleOrUrl: readString(args, "channelIdOrHandleOrUrl"),
         },
-        { dryRun },
+        serviceOptions,
       );
 
     case "listChannelCatalog":
@@ -935,7 +1082,7 @@ async function executeTool(
           includeLongForm: optionalBoolean(args, "includeLongForm"),
           publishedWithinDays: optionalNumber(args, "publishedWithinDays"),
         },
-        { dryRun },
+        serviceOptions,
       );
 
     case "readTranscript":
@@ -949,7 +1096,7 @@ async function executeTool(
           offset: optionalNumber(args, "offset"),
           limit: optionalNumber(args, "limit"),
         },
-        { dryRun },
+        serviceOptions,
       );
 
     case "readComments":
@@ -962,7 +1109,7 @@ async function executeTool(
           order: optionalEnum(args, "order", ["relevance", "time"]),
           languageHint: optionalString(args, "languageHint"),
         },
-        { dryRun },
+        serviceOptions,
       );
 
     case "measureAudienceSentiment":
@@ -973,7 +1120,7 @@ async function executeTool(
           includeThemes: optionalBoolean(args, "includeThemes"),
           includeRepresentativeQuotes: optionalBoolean(args, "includeRepresentativeQuotes"),
         },
-        { dryRun },
+        serviceOptions,
       );
 
     case "analyzeVideoSet":
@@ -986,7 +1133,7 @@ async function executeTool(
           commentsSampleSize: optionalNumber(args, "commentsSampleSize"),
           transcriptMode: optionalEnum(args, "transcriptMode", ["summary", "key_moments", "full"]),
         },
-        { dryRun },
+        serviceOptions,
       );
 
     case "expandPlaylist":
@@ -996,7 +1143,7 @@ async function executeTool(
           maxVideos: optionalNumber(args, "maxVideos"),
           includeVideoMeta: optionalBoolean(args, "includeVideoMeta"),
         },
-        { dryRun },
+        serviceOptions,
       );
 
     case "analyzePlaylist":
@@ -1010,7 +1157,7 @@ async function executeTool(
           commentsSampleSize: optionalNumber(args, "commentsSampleSize"),
           transcriptMode: optionalEnum(args, "transcriptMode", ["summary", "key_moments", "full"]),
         },
-        { dryRun },
+        serviceOptions,
       );
 
     case "importPlaylist":
@@ -1030,7 +1177,7 @@ async function executeTool(
           embeddingDimensions: optionalNumber(args, "embeddingDimensions"),
           activateCollection: optionalBoolean(args, "activateCollection"),
         },
-        { dryRun },
+        serviceOptions,
       );
 
     case "importVideos":
@@ -1049,7 +1196,7 @@ async function executeTool(
           embeddingDimensions: optionalNumber(args, "embeddingDimensions"),
           activateCollection: optionalBoolean(args, "activateCollection"),
         },
-        { dryRun },
+        serviceOptions,
       );
 
     case "searchTranscripts":
@@ -1081,7 +1228,7 @@ async function executeTool(
           videoIdOrUrl: readString(args, "videoIdOrUrl"),
           language: optionalString(args, "language"),
         },
-        { dryRun },
+        serviceOptions,
       );
 
     case "buildVideoDossier":
@@ -1093,7 +1240,7 @@ async function executeTool(
           includeSentiment: optionalBoolean(args, "includeSentiment"),
           includeTranscriptSummary: optionalBoolean(args, "includeTranscriptSummary"),
         },
-        { dryRun },
+        serviceOptions,
       );
 
     case "checkSystemHealth":
@@ -1101,7 +1248,7 @@ async function executeTool(
         {
           runLiveChecks: optionalBoolean(args, "runLiveChecks"),
         },
-        { dryRun },
+        serviceOptions,
       );
 
     case "removeCollection":
@@ -1115,7 +1262,7 @@ async function executeTool(
           videoIdsOrUrls: readStringArray(args, "videoIdsOrUrls"),
           hookWindowSec: optionalNumber(args, "hookWindowSec"),
         },
-        { dryRun },
+        serviceOptions,
       );
 
     case "researchTagsAndTitles":
@@ -1126,7 +1273,7 @@ async function executeTool(
           language: optionalString(args, "language"),
           maxExamples: optionalNumber(args, "maxExamples"),
         },
-        { dryRun },
+        serviceOptions,
       );
 
     case "compareShortsVsLong":
@@ -1135,7 +1282,7 @@ async function executeTool(
           channelIdOrHandleOrUrl: readString(args, "channelIdOrHandleOrUrl"),
           lookbackDays: optionalNumber(args, "lookbackDays"),
         },
-        { dryRun },
+        serviceOptions,
       );
 
     // ── Comment Knowledge Base ──
@@ -1151,7 +1298,7 @@ async function executeTool(
           label: optionalString(args, "label"),
           activateCollection: optionalBoolean(args, "activateCollection"),
         },
-        { dryRun },
+        serviceOptions,
       );
 
     case "searchComments":
@@ -1189,7 +1336,7 @@ async function executeTool(
           timezone: readString(args, "timezone"),
           lookbackDays: optionalNumber(args, "lookbackDays"),
         },
-        { dryRun },
+        serviceOptions,
       );
 
     case "discoverNicheTrends":
@@ -1200,7 +1347,7 @@ async function executeTool(
           maxResults: optionalNumber(args, "maxResults"),
           lookbackDays: optionalNumber(args, "lookbackDays"),
         },
-        { dryRun },
+        serviceOptions,
       );
 
     case "exploreNicheCompetitors":
@@ -1210,179 +1357,119 @@ async function executeTool(
           regionCode: optionalString(args, "regionCode"),
           maxChannels: optionalNumber(args, "maxChannels"),
         },
-        { dryRun },
+        serviceOptions,
+      );
+
+    case "inspectVideoSource":
+      return service.inspectVideoSource(
+        {
+          source: readString(args, "source"),
+        },
+      );
+
+    case "searchVideoSources":
+      return service.searchVideoSources(
+        {
+          query: readString(args, "query"),
+          platforms: optionalStringArray(args, "platforms") as any,
+          maxResults: optionalNumber(args, "maxResults"),
+          includeLocalAssets: optionalBoolean(args, "includeLocalAssets"),
+        },
+        serviceOptions,
+      );
+
+    case "findSourcedVideos":
+      return service.findSourcedVideos(
+        {
+          query: readString(args, "query"),
+          platforms: optionalStringArray(args, "platforms") as any,
+          maxResults: optionalNumber(args, "maxResults"),
+          includeLocalAssets: optionalBoolean(args, "includeLocalAssets"),
+        },
+        serviceOptions,
+      );
+
+    case "exploreSourcedVideos":
+      return service.exploreSourcedVideos(
+        {
+          query: readString(args, "query"),
+          includePlatforms: optionalStringArray(args, "includePlatforms") as any,
+          maxResults: optionalNumber(args, "maxResults"),
+          includeLocalAssets: optionalBoolean(args, "includeLocalAssets"),
+        },
+        serviceOptions,
+      );
+
+    case "importVideoSources":
+      return service.importVideoSources(
+        {
+          sources: readStringArray(args, "sources"),
+          downloadFormat: optionalEnum(args, "downloadFormat", ["best_video", "worst_video"]),
+          maxSizeMb: optionalNumber(args, "maxSizeMb"),
+          indexVisualContent: optionalBoolean(args, "indexVisualContent"),
+          transcribe: optionalBoolean(args, "transcribe"),
+          language: optionalString(args, "language"),
+          sttProvider: optionalEnum(args, "sttProvider", ["auto", "whisper-cpp", "gemini", "openai"]),
+          collectionId: optionalString(args, "collectionId"),
+          activateCollection: optionalBoolean(args, "activateCollection"),
+          intervalSec: optionalNumber(args, "intervalSec"),
+          maxFrames: optionalNumber(args, "maxFrames"),
+        },
+        serviceOptions,
+      );
+
+    case "transcribeVideoSource":
+      return service.transcribeVideoSource(
+        {
+          source: readString(args, "source"),
+          language: optionalString(args, "language"),
+          sttProvider: optionalEnum(args, "sttProvider", ["auto", "whisper-cpp", "gemini", "openai"]),
+          forceReindex: optionalBoolean(args, "forceReindex"),
+          collectionId: optionalString(args, "collectionId"),
+          activateCollection: optionalBoolean(args, "activateCollection"),
+        },
+        serviceOptions,
       );
 
     // ── Media / Asset tools ──────────────────────────────────
-    case "downloadAsset": {
-      const mediaStore = getMediaStore();
-      const mediaDownloader = getMediaDownloader();
-      const videoIdOrUrl = readString(args, "videoIdOrUrl");
-      const format = readString(args, "format") as "best_video" | "best_audio" | "thumbnail" | "worst_video";
-      const maxSizeMb = optionalNumber(args, "maxSizeMb");
-      const result = await mediaDownloader.download({ videoIdOrUrl, format, maxSizeMb });
-      const provenance = { sourceTier: "yt_dlp" as const, fetchedAt: new Date().toISOString(), fallbackDepth: 0 as const, partial: false };
-      return {
-        asset: {
-          assetId: result.asset.assetId,
-          videoId: result.asset.videoId,
-          kind: result.asset.kind,
-          filePath: result.asset.filePath,
-          fileName: result.asset.fileName,
-          fileSizeBytes: result.asset.fileSizeBytes,
-          mimeType: result.asset.mimeType,
-          durationSec: result.asset.durationSec,
-          width: result.asset.width,
-          height: result.asset.height,
+    case "downloadAsset":
+      return service.downloadAsset(
+        {
+          videoIdOrUrl: readString(args, "videoIdOrUrl"),
+          format: readString(args, "format") as "best_video" | "best_audio" | "thumbnail" | "worst_video",
+          maxSizeMb: optionalNumber(args, "maxSizeMb"),
         },
-        downloadedBytes: result.downloadedBytes,
-        durationMs: result.durationMs,
-        cached: result.downloadedBytes === 0,
-        provenance,
-      };
-    }
+        serviceOptions,
+      );
 
-    case "listMediaAssets": {
-      const mediaStore = getMediaStore();
-      const videoIdOrUrl = optionalString(args, "videoIdOrUrl");
-      const kind = optionalString(args, "kind") as "video" | "audio" | "thumbnail" | "keyframe" | undefined;
-      const limit = optionalNumber(args, "limit");
-
-      let assets;
-      if (videoIdOrUrl) {
-        const videoId = parseVideoId(videoIdOrUrl) ?? videoIdOrUrl;
-        assets = mediaStore.listAssetsForVideo(videoId);
-        if (kind) assets = assets.filter((a) => a.kind === kind);
-        if (limit) assets = assets.slice(0, limit);
-      } else {
-        assets = mediaStore.listAllAssets({ kind: kind as any, limit });
-      }
-
-      const stats = mediaStore.getStats();
-      const provenance = { sourceTier: "none" as const, fetchedAt: new Date().toISOString(), fallbackDepth: 0 as const, partial: false };
-      return {
-        assets: assets.map((a) => ({
-          assetId: a.assetId,
-          videoId: a.videoId,
-          kind: a.kind,
-          filePath: a.filePath,
-          fileName: a.fileName,
-          fileSizeBytes: a.fileSizeBytes,
-          mimeType: a.mimeType,
-          timestampSec: a.timestampSec,
-          width: a.width,
-          height: a.height,
-          durationSec: a.durationSec,
-          createdAt: a.createdAt,
-        })),
-        stats: {
-          totalAssets: stats.totalAssets,
-          totalSizeBytes: stats.totalSizeBytes,
-          videoCount: stats.videoCount,
-          byKind: stats.byKind,
-        },
-        provenance,
-      };
-    }
-
-    case "removeMediaAsset": {
-      const mediaStore = getMediaStore();
-      const assetId = optionalString(args, "assetId");
-      const videoIdOrUrl = optionalString(args, "videoIdOrUrl");
-      const deleteFiles = readBoolean(args, "deleteFiles", true);
-
-      if (!assetId && !videoIdOrUrl) {
-        throw new Error("Provide either assetId or videoIdOrUrl to specify what to remove");
-      }
-
-      let removed = 0;
-      let freedBytes = 0;
-
-      if (assetId) {
-        const asset = mediaStore.getAsset(assetId);
-        if (asset) {
-          freedBytes = asset.fileSizeBytes;
-          mediaStore.removeAsset(assetId, deleteFiles);
-          removed = 1;
-        }
-      } else if (videoIdOrUrl) {
-        const videoId = parseVideoId(videoIdOrUrl) ?? videoIdOrUrl;
-        const assets = mediaStore.listAssetsForVideo(videoId);
-        freedBytes = assets.reduce((sum, a) => sum + a.fileSizeBytes, 0);
-        removed = mediaStore.removeVideoAssets(videoId, deleteFiles);
-      }
-
-      const provenance = { sourceTier: "none" as const, fetchedAt: new Date().toISOString(), fallbackDepth: 0 as const, partial: false };
-      return { removed, freedBytes, provenance };
-    }
-
-    case "extractKeyframes": {
-      const mediaStore = getMediaStore();
-      const thumbnailExtractor = getThumbnailExtractor();
-      const videoIdOrUrl = readString(args, "videoIdOrUrl");
-      const videoId = parseVideoId(videoIdOrUrl) ?? videoIdOrUrl;
-      const result = await thumbnailExtractor.extractKeyframes({
-        videoId,
-        intervalSec: optionalNumber(args, "intervalSec"),
-        maxFrames: optionalNumber(args, "maxFrames"),
-        imageFormat: optionalEnum(args, "imageFormat", ["jpg", "png", "webp"]),
-        width: optionalNumber(args, "width"),
+    case "listMediaAssets":
+      return service.listMediaAssets({
+        videoIdOrUrl: optionalString(args, "videoIdOrUrl"),
+        kind: optionalString(args, "kind") as any,
+        limit: optionalNumber(args, "limit"),
       });
-      const provenance = { sourceTier: "none" as const, fetchedAt: new Date().toISOString(), fallbackDepth: 0 as const, partial: false, sourceNotes: ["Extracted locally via ffmpeg"] };
-      return {
-        videoId: result.videoId,
-        framesExtracted: result.framesExtracted,
-        assets: result.assets.map((a) => ({
-          assetId: a.assetId,
-          filePath: a.filePath,
-          timestampSec: a.timestampSec ?? 0,
-          width: a.width,
-          height: a.height,
-          fileSizeBytes: a.fileSizeBytes,
-        })),
-        durationMs: result.durationMs,
-        provenance,
-      };
-    }
 
-    case "mediaStoreHealth": {
-      const mediaStore = getMediaStore();
-      const thumbnailExtractor = getThumbnailExtractor();
-      const mediaDownloader = getMediaDownloader();
-      const stats = mediaStore.getStats();
-      let ffmpegAvailable = false;
-      let ffmpegVersion: string | undefined;
-      let ytdlpAvailable = false;
-      let ytdlpVersion: string | undefined;
+    case "removeMediaAsset":
+      return service.removeMediaAsset({
+        assetId: optionalString(args, "assetId"),
+        videoIdOrUrl: optionalString(args, "videoIdOrUrl"),
+        deleteFiles: readBoolean(args, "deleteFiles", true),
+      });
 
-      try {
-        const probeResult = await thumbnailExtractor.probe();
-        ffmpegAvailable = true;
-        ffmpegVersion = probeResult.ffmpeg;
-      } catch { /* unavailable */ }
-      try {
-        const probeResult = await mediaDownloader.probe();
-        ytdlpAvailable = true;
-        ytdlpVersion = probeResult.version;
-      } catch { /* unavailable */ }
-
-      const provenance = { sourceTier: "none" as const, fetchedAt: new Date().toISOString(), fallbackDepth: 0 as const, partial: false };
-      return {
-        dataDir: mediaStore.dataDir,
-        assetsDir: mediaStore.assetsDir,
-        stats: {
-          totalAssets: stats.totalAssets,
-          totalSizeBytes: stats.totalSizeBytes,
-          videoCount: stats.videoCount,
-          byKind: stats.byKind,
+    case "extractKeyframes":
+      return service.extractKeyframes(
+        {
+          videoIdOrUrl: readString(args, "videoIdOrUrl"),
+          intervalSec: optionalNumber(args, "intervalSec"),
+          maxFrames: optionalNumber(args, "maxFrames"),
+          imageFormat: optionalEnum(args, "imageFormat", ["jpg", "png", "webp"]),
+          width: optionalNumber(args, "width"),
         },
-        ffmpegAvailable,
-        ffmpegVersion,
-        ytdlpAvailable,
-        ytdlpVersion,
-        provenance,
-      };
-    }
+        serviceOptions,
+      );
+
+    case "mediaStoreHealth":
+      return service.mediaStoreHealth();
 
     case "indexVisualContent":
       return service.indexVisualContent(
@@ -1398,7 +1485,7 @@ async function executeTool(
           includeGeminiDescriptions: optionalBoolean(args, "includeGeminiDescriptions"),
           includeGeminiEmbeddings: optionalBoolean(args, "includeGeminiEmbeddings"),
         },
-        { dryRun },
+        serviceOptions,
       );
 
     case "searchVisualContent":
@@ -1418,7 +1505,7 @@ async function executeTool(
           includeGeminiDescriptions: optionalBoolean(args, "includeGeminiDescriptions"),
           includeGeminiEmbeddings: optionalBoolean(args, "includeGeminiEmbeddings"),
         },
-        { dryRun },
+        serviceOptions,
       );
 
     case "findSimilarFrames":
@@ -1430,7 +1517,7 @@ async function executeTool(
           maxResults: optionalNumber(args, "maxResults"),
           minSimilarity: optionalNumber(args, "minSimilarity"),
         },
-        { dryRun },
+        serviceOptions,
       );
 
     case "exploreYouTube":
@@ -1448,7 +1535,7 @@ async function executeTool(
           prepareVisualSearch: optionalBoolean(args, "prepareVisualSearch"),
           prepareTranscriptSearch: optionalBoolean(args, "prepareTranscriptSearch"),
         },
-        { dryRun },
+        serviceOptions,
       );
 
     default:

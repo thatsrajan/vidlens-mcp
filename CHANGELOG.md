@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-05-29
+
+### Added
+- Multi-platform source ingestion for YouTube, X/Twitter, Instagram, TikTok, generic URLs, and local video files through one MCP server.
+- `transcribeVideoSource` plus `importVideoSources({ transcribe: true })` for native-caption or STT-backed transcript creation.
+- Cookie-file/browser-cookie auth plumbing, secret redaction, configurable web-search fallback, and STT provider selection.
+- Source-aware transcript search metadata and non-YouTube timestamp URL handling.
+- Codex `~/.codex/config.toml` setup, plugin dev/release MCP profiles, yt-dlp freshness diagnostics, JS-runtime diagnostics, and `update-deps`.
+
 ## [1.0.27] - 2026-03-19
 
 ### Changed

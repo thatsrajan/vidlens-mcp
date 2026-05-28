@@ -49,6 +49,30 @@ function youtubeTimestampUrl(videoId: string, sec: number): string {
   return `https://youtu.be/${videoId}?t=${Math.floor(sec)}`;
 }
 
+function frameTargetUrl(frame: VisualReportFrame): string {
+  const sourceUrl = frame.sourceVideoUrl?.trim();
+  const seconds = Math.max(0, Math.floor(frame.timestampSec));
+  if (!sourceUrl) {
+    return youtubeTimestampUrl(frame.videoId, seconds);
+  }
+
+  try {
+    const url = new URL(sourceUrl);
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    if (host === "youtu.be" || host.endsWith("youtube.com")) {
+      url.searchParams.set("t", String(seconds));
+      return url.toString();
+    }
+    if (host === "x.com" || host === "twitter.com") {
+      url.searchParams.set("t", `${seconds}s`);
+      return url.toString();
+    }
+    return sourceUrl;
+  } catch {
+    return sourceUrl || youtubeTimestampUrl(frame.videoId, seconds);
+  }
+}
+
 function scoreColor(score?: number): string {
   if (!score) return "#6b7280";
   if (score >= 0.8) return "#22c55e";
@@ -92,7 +116,7 @@ export function generateVisualReport(options: VisualReportOptions): { html: stri
   const title = isSearch ? `Visual Search: ${options.query}` : `Visual Index: ${options.query}`;
 
   const frameCards = frameData.map((frame, i) => {
-    const ytUrl = youtubeTimestampUrl(frame.videoId, frame.timestampSec);
+    const targetUrl = frameTargetUrl(frame);
     const ts = frame.timestampLabel ?? formatTimestamp(frame.timestampSec);
     const imgTag = frame.base64
       ? `<img src="data:${frame.mimeType};base64,${frame.base64}" alt="Frame at ${ts}" loading="lazy" />`
@@ -109,9 +133,9 @@ export function generateVisualReport(options: VisualReportOptions): { html: stri
     return `
       <div class="card">
         <div class="card-image">
-          <a href="${escapeHtml(ytUrl)}" target="_blank" rel="noopener">${imgTag}</a>
+          <a href="${escapeHtml(targetUrl)}" target="_blank" rel="noopener">${imgTag}</a>
           <div class="overlay">
-            <a href="${escapeHtml(ytUrl)}" target="_blank" rel="noopener" class="timestamp">${escapeHtml(ts)}</a>
+            <a href="${escapeHtml(targetUrl)}" target="_blank" rel="noopener" class="timestamp">${escapeHtml(ts)}</a>
             ${scoreBadge}
           </div>
         </div>

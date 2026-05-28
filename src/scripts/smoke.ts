@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { YouTubeService } from "../lib/youtube-service.js";
@@ -11,6 +11,14 @@ async function main(): Promise<void> {
   const sampleVideo = "dQw4w9WgXcQ";
   const sampleChannel = "@GoogleDevelopers";
   const samplePlaylist = "PL590L5WQmH8fJ54FNRU3kVZKeTxQqM2C4";
+  const sampleX = "https://x.com/vidlens/status/1234567890123456789";
+  const sampleInstagram = "https://www.instagram.com/reel/C0DEVIDLENS/";
+  const sampleTikTok = "https://www.tiktok.com/@vidlens/video/7350000000000000000";
+  const sampleGeneric = "https://vimeo.com/123456789";
+  const sampleLocal = dataDir ? join(dataDir, "smoke-local.mp4") : undefined;
+  if (dryRun && sampleLocal) {
+    writeFileSync(sampleLocal, "dry-run local video placeholder", "utf8");
+  }
 
   const checks: Array<{ name: string; run: () => Promise<unknown> }> = [
     {
@@ -119,6 +127,43 @@ async function main(): Promise<void> {
       name: "checkSystemHealth",
       run: () => service.checkSystemHealth({}, { dryRun }),
     },
+    {
+      name: "inspectVideoSource",
+      run: () => service.inspectVideoSource({ source: sampleTikTok }),
+    },
+    {
+      name: "searchVideoSources",
+      run: () => service.searchVideoSources({
+        query: "AI coding benchmark",
+        platforms: ["x", "instagram", "tiktok", "generic_url"],
+        maxResults: 4,
+      }, { dryRun }),
+    },
+    {
+      name: "importVideoSources",
+      run: () => service.importVideoSources({
+        sources: [sampleX, sampleInstagram, sampleTikTok, sampleGeneric],
+        downloadFormat: "worst_video",
+        transcribe: true,
+        collectionId: "smoke-universal",
+      }, { dryRun }),
+    },
+    {
+      name: "transcribeVideoSource",
+      run: () => service.transcribeVideoSource({
+        source: sampleTikTok,
+        collectionId: "smoke-transcribe",
+      }, { dryRun }),
+    },
+    ...(sampleLocal ? [{
+      name: "importVideoSourcesLocal",
+      run: () => service.importVideoSources({
+        sources: [sampleLocal],
+        downloadFormat: "worst_video",
+        transcribe: true,
+        collectionId: "smoke-local",
+      }, { dryRun }),
+    }] : []),
     {
       name: "removeCollection",
       run: () => service.removeCollection({ collectionId: `playlist-${samplePlaylist}` }),

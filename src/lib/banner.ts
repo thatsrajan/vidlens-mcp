@@ -9,8 +9,8 @@ const RESET = "\x1b[0m";
 
 const banner = `
   ${RED}▶${RESET} ${BOLD}VidLens MCP${RESET}
-    YouTube intelligence layer for AI agents
-    ${DIM}41 tools · zero config${RESET}
+    Video intelligence layer for AI agents
+    ${DIM}45 tools · zero config${RESET}
 `;
 
 export function printBanner(): void {
@@ -22,6 +22,6 @@ export function printBanner(): void {
 
 export const bannerPlain = `
   ▶ VidLens MCP
-    YouTube intelligence layer for AI agents
-    41 tools · zero config
+    Video intelligence layer for AI agents
+    45 tools · zero config
 `;

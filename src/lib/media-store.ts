@@ -18,6 +18,10 @@ export type AssetKind = "video" | "audio" | "thumbnail" | "keyframe";
 export interface MediaAsset {
   assetId: string;
   videoId: string;
+  sourcePlatform?: string;
+  sourceUrl?: string;
+  sourceId?: string;
+  canonicalUrl?: string;
   kind: AssetKind;
   filePath: string;
   fileName: string;
@@ -88,6 +92,10 @@ export class MediaStore {
       CREATE TABLE IF NOT EXISTS media_assets (
         asset_id        TEXT PRIMARY KEY,
         video_id        TEXT NOT NULL,
+        source_platform TEXT,
+        source_url      TEXT,
+        source_id       TEXT,
+        canonical_url   TEXT,
         kind            TEXT NOT NULL CHECK(kind IN ('video','audio','thumbnail','keyframe')),
         file_path       TEXT NOT NULL,
         file_name       TEXT NOT NULL,
@@ -103,6 +111,21 @@ export class MediaStore {
       CREATE INDEX IF NOT EXISTS idx_media_video ON media_assets(video_id);
       CREATE INDEX IF NOT EXISTS idx_media_kind  ON media_assets(kind);
     `);
+    this.addColumnIfMissing("media_assets", "source_platform", "TEXT");
+    this.addColumnIfMissing("media_assets", "source_url", "TEXT");
+    this.addColumnIfMissing("media_assets", "source_id", "TEXT");
+    this.addColumnIfMissing("media_assets", "canonical_url", "TEXT");
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_media_source_platform ON media_assets(source_platform);
+      CREATE INDEX IF NOT EXISTS idx_media_source_id ON media_assets(source_id);
+    `);
+  }
+
+  private addColumnIfMissing(table: string, column: string, definition: string): void {
+    const rows = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (!rows.some((row) => row.name === column)) {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
   }
 
   /* ── Write ──────────────────────────────────────────────────── */
@@ -113,6 +136,10 @@ export class MediaStore {
    */
   registerAsset(params: {
     videoId: string;
+    sourcePlatform?: string;
+    sourceUrl?: string;
+    sourceId?: string;
+    canonicalUrl?: string;
     kind: AssetKind;
     filePath: string;
     mimeType?: string;
@@ -136,12 +163,17 @@ export class MediaStore {
 
     this.db.prepare(`
       INSERT INTO media_assets
-        (asset_id, video_id, kind, file_path, file_name, file_size_bytes,
+        (asset_id, video_id, source_platform, source_url, source_id, canonical_url,
+         kind, file_path, file_name, file_size_bytes,
          mime_type, timestamp_sec, width, height, duration_sec, meta_json, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       assetId,
       params.videoId,
+      params.sourcePlatform ?? null,
+      params.sourceUrl ?? null,
+      params.sourceId ?? null,
+      params.canonicalUrl ?? null,
       params.kind,
       params.filePath,
       fileName,
@@ -158,6 +190,10 @@ export class MediaStore {
     return {
       assetId,
       videoId: params.videoId,
+      sourcePlatform: params.sourcePlatform,
+      sourceUrl: params.sourceUrl,
+      sourceId: params.sourceId,
+      canonicalUrl: params.canonicalUrl,
       kind: params.kind,
       filePath: params.filePath,
       fileName,
@@ -296,6 +332,10 @@ export class MediaStore {
 interface RawRow {
   asset_id: string;
   video_id: string;
+  source_platform?: string | null;
+  source_url?: string | null;
+  source_id?: string | null;
+  canonical_url?: string | null;
   kind: string;
   file_path: string;
   file_name: string;
@@ -313,6 +353,10 @@ function rowToAsset(row: RawRow): MediaAsset {
   return {
     assetId: row.asset_id,
     videoId: row.video_id,
+    sourcePlatform: row.source_platform ?? undefined,
+    sourceUrl: row.source_url ?? undefined,
+    sourceId: row.source_id ?? undefined,
+    canonicalUrl: row.canonical_url ?? undefined,
     kind: row.kind as AssetKind,
     filePath: row.file_path,
     fileName: row.file_name,

@@ -35,6 +35,14 @@ export interface TokenControls {
 
 export interface ServiceOptions {
   dryRun?: boolean;
+  progressReporter?: {
+    report(event: {
+      phase: string;
+      current: number;
+      total?: number;
+      message?: string;
+    }): Promise<void> | void;
+  };
 }
 
 export interface SearchItem {
@@ -70,6 +78,9 @@ export interface VideoRecord {
   transcriptAvailable?: boolean;
   chapters?: Chapter[];
   url: string;
+  sourcePlatform?: VideoSourcePlatform;
+  sourceId?: string;
+  canonicalUrl?: string;
 }
 
 export interface Chapter {
@@ -540,6 +551,9 @@ export interface SearchTranscriptsOutput {
     videoId: string;
     videoTitle: string;
     channelTitle?: string;
+    sourcePlatform?: VideoSourcePlatform;
+    sourceId?: string;
+    canonicalUrl?: string;
     chunkText: string;
     tStartSec: number;
     tEndSec?: number;
@@ -702,10 +716,46 @@ export interface CheckSystemHealthOutput {
     nodeVersion: string;
     packageName: string;
     packageVersion: string;
+    jsRuntime?: {
+      runtime: "deno" | "node" | "none";
+      version?: string;
+      source: "managed" | "system" | "none";
+    };
   };
   keys: {
     youtubeApiConfigured: boolean;
     geminiConfigured: boolean;
+    openaiConfigured?: boolean;
+    braveConfigured?: boolean;
+    serpapiConfigured?: boolean;
+  };
+  platforms?: Array<{
+    platform: VideoSourcePlatform;
+    status: "ready" | "auth_required" | "degraded" | "unsupported";
+    detail: string;
+  }>;
+  stt?: {
+    selectedProvider: SttProviderId | "none";
+    available: boolean;
+    details: string[];
+  };
+  webSearch?: {
+    selectedProvider: WebSearchProviderId | "none";
+    available: boolean;
+    details: string[];
+  };
+  ytdlp?: {
+    binary?: string;
+    version?: string;
+    freshness?: "unknown" | "fresh" | "stale" | "severely_stale";
+    latestVersion?: string;
+    recommendation?: string;
+  };
+  ffmpeg?: {
+    available: boolean;
+    ffmpegVersion?: string;
+    ffprobeVersion?: string;
+    recommendation?: string;
   };
   clients: ClientDetectionSummary[];
   checks: DiagnosticCheck[];
@@ -1103,6 +1153,141 @@ export interface ExploreYouTubeOutput {
  * ──────────────────────────────────────────────────────────────── */
 
 export type MediaAssetKind = "video" | "audio" | "thumbnail" | "keyframe";
+export type VideoSourcePlatform = "youtube" | "x" | "instagram" | "tiktok" | "generic_url" | "local_file";
+export type TranscriptCapabilityMode = "native" | "stt" | "unsupported";
+export type WebSearchProviderId = "brave" | "serpapi" | "duckduckgo_lite";
+export type SttProviderId = "whisper-cpp" | "gemini" | "openai";
+export type YtDlpFreshnessStatus = "unknown" | "fresh" | "stale" | "severely_stale";
+
+export interface VideoSourceCapabilities {
+  search: "native" | "web_fallback" | "local_index" | "unsupported";
+  inspect: boolean;
+  download: boolean;
+  transcript: boolean;
+  transcriptMode?: TranscriptCapabilityMode;
+  comments: boolean;
+  thumbnail: boolean;
+  visualIndex: boolean;
+  requiresAuth: boolean;
+  authModes: Array<"none" | "cookies" | "api_key">;
+  notes: string[];
+}
+
+export interface VideoSourceSummary {
+  input: string;
+  platform: VideoSourcePlatform;
+  sourceId: string;
+  assetKey: string;
+  canonicalUrl: string;
+  sourceUrl?: string;
+  localPath?: string;
+  titleHint?: string;
+  capabilities: VideoSourceCapabilities;
+}
+
+export interface InspectVideoSourceInput extends TokenControls {
+  source: string;
+}
+
+export interface InspectVideoSourceOutput {
+  source: VideoSourceSummary;
+  compatibility: {
+    claudeMcp: boolean;
+    codexMcp: boolean;
+    codexPlugin: boolean;
+  };
+  limitations: string[];
+  provenance: Provenance;
+}
+
+export interface SearchVideoSourcesInput extends TokenControls {
+  query: string;
+  platforms?: VideoSourcePlatform[];
+  maxResults?: number;
+  includeLocalAssets?: boolean;
+}
+
+export interface SearchVideoSourcesOutput {
+  query: string;
+  results: Array<{
+    platform: VideoSourcePlatform;
+    sourceId: string;
+    assetKey: string;
+    canonicalUrl: string;
+    title?: string;
+    creator?: string;
+    durationSec?: number;
+    matchReason: string;
+  }>;
+  searched: Array<{
+    platform: VideoSourcePlatform | "local_assets";
+    mode: "native" | "web_fallback" | "local_index" | "unsupported";
+    providerId?: WebSearchProviderId;
+    status: "ok" | "partial" | "skipped";
+    detail: string;
+  }>;
+  limitations: string[];
+  provenance: Provenance;
+}
+
+export interface ImportVideoSourcesInput extends TokenControls {
+  sources: string[];
+  downloadFormat?: "best_video" | "worst_video";
+  maxSizeMb?: number;
+  indexVisualContent?: boolean;
+  transcribe?: boolean;
+  intervalSec?: number;
+  maxFrames?: number;
+  language?: string;
+  sttProvider?: SttProviderId | "auto";
+  collectionId?: string;
+  activateCollection?: boolean;
+}
+
+export interface ImportVideoSourcesOutput {
+  imported: Array<{
+    source: VideoSourceSummary;
+    assetId: string;
+    filePath: string;
+    indexedFrames?: number;
+    transcriptCharacters?: number;
+    transcriptSegments?: number;
+    collectionId?: string;
+  }>;
+  failures: Array<{
+    source: string;
+    message: string;
+  }>;
+  limitations: string[];
+  provenance: Provenance;
+}
+
+export interface TranscribeVideoSourceInput extends TokenControls {
+  source: string;
+  language?: string;
+  sttProvider?: SttProviderId | "auto";
+  forceReindex?: boolean;
+  collectionId?: string;
+  activateCollection?: boolean;
+}
+
+export interface TranscribeVideoSourceOutput {
+  source: VideoSourceSummary;
+  transcript: {
+    videoId: string;
+    languageUsed?: string;
+    sourceType: TranscriptRecord["sourceType"];
+    confidence?: number;
+    transcriptCharacters: number;
+    segmentCount: number;
+    chunksProcessed: number;
+    totalChunks: number;
+  };
+  collectionId?: string;
+  activeCollectionId?: string;
+  durationMs: number;
+  provenance: Provenance;
+}
 
 export interface DownloadAssetInput {
   videoIdOrUrl: string;
@@ -1114,6 +1299,10 @@ export interface DownloadAssetOutput {
   asset: {
     assetId: string;
     videoId: string;
+    sourcePlatform?: string;
+    sourceUrl?: string;
+    sourceId?: string;
+    canonicalUrl?: string;
     kind: MediaAssetKind;
     filePath: string;
     fileName: string;
@@ -1139,6 +1328,10 @@ export interface ListMediaAssetsOutput {
   assets: Array<{
     assetId: string;
     videoId: string;
+    sourcePlatform?: string;
+    sourceUrl?: string;
+    sourceId?: string;
+    canonicalUrl?: string;
     kind: MediaAssetKind;
     filePath: string;
     fileName: string;

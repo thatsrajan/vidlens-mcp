@@ -5,11 +5,13 @@
  * This module intentionally does NOT do frame-level visual indexing — it downloads
  * and stores media files. Visual search is handled separately by the visual-search layer.
  */
-import { existsSync, readdirSync, statSync, readFileSync } from "node:fs";
-import { join, extname } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { basename, extname, join } from "node:path";
 import { execa } from "execa";
 import { MediaStore, type AssetKind, type MediaAsset } from "./media-store.js";
-import { buildVideoUrl, parseVideoId } from "./id-parsing.js";
+import { resolveVideoSource, type VideoSourceRef } from "./video-source.js";
+import { CookieStore } from "./auth/cookie-store.js";
+import { redactError } from "./redactor.js";
 
 /* ── Types ─────────────────────────────────────────────────────── */
 
@@ -36,14 +38,16 @@ export class MediaDownloader {
   constructor(
     private readonly store: MediaStore,
     private readonly ytdlpBinary = "yt-dlp",
+    private readonly cookieStore = new CookieStore(),
   ) {}
 
   /**
-   * Download a media asset for a YouTube video and register it in the manifest.
+ * Download or ingest a media asset and register it in the manifest.
    */
   async download(options: DownloadOptions): Promise<DownloadResult> {
-    const videoId = parseVideoId(options.videoIdOrUrl) ?? options.videoIdOrUrl;
-    const url = videoId.startsWith("http") ? videoId : buildVideoUrl(videoId);
+    const source = resolveVideoSource(options.videoIdOrUrl);
+    const videoId = source.assetKey;
+    const url = source.localPath ?? source.canonicalUrl;
     const outDir = options.outputDir ?? this.store.videoDir(videoId);
     const maxSizeMb = options.maxSizeMb ?? 500;
     const startMs = Date.now();
@@ -62,18 +66,24 @@ export class MediaDownloader {
       };
     }
 
+    if (source.platform === "local_file") {
+      return this.ingestLocalFile(source, options.format, outDir, maxSizeMb, startMs);
+    }
+
     if (options.format === "thumbnail") {
-      return this.downloadThumbnail(videoId, url, outDir, startMs);
+      return this.downloadThumbnail(source, url, outDir, startMs);
     }
 
     // Build yt-dlp args
     const formatArg = ytdlpFormatArg(options.format);
-    const outputTemplate = join(outDir, "%(id)s.%(ext)s");
+    const outputTemplate = join(outDir, `${videoId}.%(ext)s`);
 
     const args = [
       "--no-warnings",
       "--no-playlist",
       "--no-part",
+      ...this.ytDlpAuthArgs(source),
+      ...extractorArgsForPlatform(source.platform),
       "-f", formatArg,
       "--max-filesize", `${maxSizeMb}M`,
       "-o", outputTemplate,
@@ -83,7 +93,7 @@ export class MediaDownloader {
     try {
       await execa(this.ytdlpBinary, args, { timeout: 300_000, reject: true });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = redactError(error);
       throw new Error(`yt-dlp download failed for ${videoId}: ${message}`);
     }
 
@@ -98,21 +108,36 @@ export class MediaDownloader {
 
     // Get duration from yt-dlp metadata
     let durationSec: number | undefined;
+    let metadata: Record<string, unknown> | undefined;
     try {
       const { stdout } = await execa(this.ytdlpBinary, [
-        "--dump-single-json", "--skip-download", "--no-warnings", url,
+        "--dump-single-json", "--skip-download", "--no-warnings",
+        ...this.ytDlpAuthArgs(source),
+        ...extractorArgsForPlatform(source.platform),
+        url,
       ], { timeout: 30_000 });
-      const meta = JSON.parse(stdout) as { duration?: number };
+      const meta = JSON.parse(stdout) as { duration?: number; title?: string; extractor?: string; webpage_url?: string };
       durationSec = meta.duration;
+      metadata = compactMeta({
+        title: meta.title,
+        extractor: meta.extractor,
+        webpageUrl: meta.webpage_url,
+        sourceInput: options.videoIdOrUrl,
+      });
     } catch {
       // non-critical
     }
 
     const asset = this.store.registerAsset({
       videoId,
+      sourcePlatform: source.platform,
+      sourceUrl: source.sourceUrl,
+      sourceId: source.sourceId,
+      canonicalUrl: source.canonicalUrl,
       kind,
       filePath,
       durationSec,
+      meta: metadata,
     });
 
     return {
@@ -126,11 +151,12 @@ export class MediaDownloader {
    * Download the YouTube thumbnail image for a video.
    */
   private async downloadThumbnail(
-    videoId: string,
+    source: VideoSourceRef,
     url: string,
     outDir: string,
     startMs: number,
   ): Promise<DownloadResult> {
+    const videoId = source.assetKey;
     const outputTemplate = join(outDir, `${videoId}-thumb.%(ext)s`);
 
     const args = [
@@ -139,6 +165,8 @@ export class MediaDownloader {
       "--skip-download",
       "--write-thumbnail",
       "--convert-thumbnails", "jpg",
+      ...this.ytDlpAuthArgs(source),
+      ...extractorArgsForPlatform(source.platform),
       "-o", outputTemplate,
       url,
     ];
@@ -146,7 +174,7 @@ export class MediaDownloader {
     try {
       await execa(this.ytdlpBinary, args, { timeout: 60_000, reject: true });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = redactError(error);
       throw new Error(`Thumbnail download failed for ${videoId}: ${message}`);
     }
 
@@ -178,10 +206,155 @@ export class MediaDownloader {
 
     const asset = this.store.registerAsset({
       videoId,
+      sourcePlatform: source.platform,
+      sourceUrl: source.sourceUrl,
+      sourceId: source.sourceId,
+      canonicalUrl: source.canonicalUrl,
       kind: "thumbnail",
       filePath,
       width,
       height,
+    });
+
+    return {
+      asset,
+      downloadedBytes: stat.size,
+      durationMs: Date.now() - startMs,
+    };
+  }
+
+  private async ingestLocalFile(
+    source: VideoSourceRef,
+    format: DownloadFormat,
+    outDir: string,
+    maxSizeMb: number,
+    startMs: number,
+  ): Promise<DownloadResult> {
+    if (!source.localPath) {
+      throw new Error("Local file source did not include a file path.");
+    }
+    if (format === "best_audio") {
+      return this.extractLocalAudio(source, outDir, maxSizeMb, startMs);
+    }
+    if (format === "thumbnail") {
+      throw new Error("Local files currently support video or audio ingestion only. Use best_video, worst_video, or best_audio.");
+    }
+    if (format !== "best_video" && format !== "worst_video") {
+      throw new Error("Local files currently support video or audio ingestion only. Use best_video, worst_video, or best_audio.");
+    }
+
+    const stat = statSync(source.localPath);
+    const maxBytes = maxSizeMb * 1024 * 1024;
+    if (stat.size > maxBytes) {
+      throw new Error(`Local file exceeds maxSizeMb (${maxSizeMb} MB): ${source.localPath}`);
+    }
+
+    mkdirSync(outDir, { recursive: true });
+    const outFile = join(outDir, basename(source.localPath));
+    if (!existsSync(outFile)) {
+      copyFileSync(source.localPath, outFile);
+    }
+
+    let durationSec: number | undefined;
+    try {
+      const { stdout } = await execa("ffprobe", [
+        "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "json",
+        outFile,
+      ], { timeout: 15_000 });
+      const data = JSON.parse(stdout) as { format?: { duration?: string } };
+      durationSec = data.format?.duration ? Number(data.format.duration) : undefined;
+    } catch {
+      // non-critical
+    }
+
+    const asset = this.store.registerAsset({
+      videoId: source.assetKey,
+      sourcePlatform: source.platform,
+      sourceUrl: source.canonicalUrl,
+      sourceId: source.sourceId,
+      canonicalUrl: source.canonicalUrl,
+      kind: "video",
+      filePath: outFile,
+      durationSec,
+      meta: compactMeta({
+        sourceInput: source.input,
+        originalPath: source.localPath,
+        title: source.titleHint,
+      }),
+    });
+
+    return {
+      asset,
+      downloadedBytes: existsSync(outFile) && outFile !== source.localPath ? statSync(outFile).size : 0,
+      durationMs: Date.now() - startMs,
+    };
+  }
+
+  private async extractLocalAudio(
+    source: VideoSourceRef,
+    outDir: string,
+    maxSizeMb: number,
+    startMs: number,
+  ): Promise<DownloadResult> {
+    if (!source.localPath) {
+      throw new Error("Local file source did not include a file path.");
+    }
+
+    const inputStat = statSync(source.localPath);
+    const maxBytes = maxSizeMb * 1024 * 1024;
+    if (inputStat.size > maxBytes) {
+      throw new Error(`Local file exceeds maxSizeMb (${maxSizeMb} MB): ${source.localPath}`);
+    }
+
+    mkdirSync(outDir, { recursive: true });
+    const base = basename(source.localPath, extname(source.localPath)).replace(/[^a-z0-9_-]+/gi, "_");
+    const outFile = join(outDir, `${base}.m4a`);
+    if (!existsSync(outFile)) {
+      try {
+        await execa("ffmpeg", [
+          "-y",
+          "-i", source.localPath,
+          "-vn",
+          "-c:a", "aac",
+          "-b:a", "192k",
+          outFile,
+        ], { timeout: 300_000, reject: true });
+      } catch (error) {
+        throw new Error(`Local audio extraction failed for ${source.assetKey}: ${redactError(error)}`);
+      }
+    }
+
+    const stat = statSync(outFile);
+    let durationSec: number | undefined;
+    try {
+      const { stdout } = await execa("ffprobe", [
+        "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "json",
+        outFile,
+      ], { timeout: 15_000 });
+      const data = JSON.parse(stdout) as { format?: { duration?: string } };
+      durationSec = data.format?.duration ? Number(data.format.duration) : undefined;
+    } catch {
+      // non-critical
+    }
+
+    const asset = this.store.registerAsset({
+      videoId: source.assetKey,
+      sourcePlatform: source.platform,
+      sourceUrl: source.canonicalUrl,
+      sourceId: source.sourceId,
+      canonicalUrl: source.canonicalUrl,
+      kind: "audio",
+      filePath: outFile,
+      durationSec,
+      meta: compactMeta({
+        sourceInput: source.input,
+        originalPath: source.localPath,
+        title: source.titleHint,
+      }),
     });
 
     return {
@@ -200,6 +373,10 @@ export class MediaDownloader {
       reject: true,
     });
     return { binary: this.ytdlpBinary, version: stdout.trim() };
+  }
+
+  private ytDlpAuthArgs(source: VideoSourceRef): string[] {
+    return this.cookieStore.argsFor(source.platform);
   }
 }
 
@@ -230,6 +407,19 @@ function ytdlpFormatArg(format: DownloadFormat): string {
   }
 }
 
+function extractorArgsForPlatform(platform: VideoSourceRef["platform"]): string[] {
+  switch (platform) {
+    case "tiktok":
+      return ["--extractor-args", "tiktok:api_hostname=api22-normal-c-useast2a.tiktokv.com"];
+    case "instagram":
+      return ["--extractor-args", "instagram:include_stories=false"];
+    case "x":
+      return ["--extractor-args", "twitter:legacy_api=false"];
+    default:
+      return [];
+  }
+}
+
 function findDownloadedFile(dir: string, videoId: string): string | undefined {
   if (!existsSync(dir)) return undefined;
   const files = readdirSync(dir);
@@ -248,4 +438,9 @@ function findDownloadedFile(dir: string, videoId: string): string | undefined {
 function findFile(dir: string, prefix: string): string | undefined {
   if (!existsSync(dir)) return undefined;
   return readdirSync(dir).find((f) => f.startsWith(prefix));
+}
+
+function compactMeta(values: Record<string, unknown>): Record<string, unknown> | undefined {
+  const entries = Object.entries(values).filter(([, value]) => value !== undefined && value !== null && value !== "");
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }

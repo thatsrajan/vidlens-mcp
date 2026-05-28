@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { existsSync } from "node:fs";
 import {
@@ -55,6 +55,11 @@ describe("parseCliArgs for setup", () => {
     assert.equal(parsed.printOnly, true);
   });
 
+  it("setup with --advanced enables optional setup prompts", () => {
+    const parsed = parseCliArgs(["setup", "--advanced"]);
+    assert.equal(parsed.advancedSetup, true);
+  });
+
   it("setup with --dry-run also sets printOnly", () => {
     const parsed = parseCliArgs(["setup", "--dry-run"]);
     assert.equal(parsed.printOnly, true);
@@ -103,6 +108,39 @@ describe("parseCliArgs for setup", () => {
     const parsed = parseCliArgs(["setup", "--google-api-key=goog-key"]);
     assert.equal(parsed.googleApiKey, "goog-key");
   });
+
+  it("parses universal ingestion setup flags", () => {
+    const parsed = parseCliArgs([
+      "setup",
+      "--openai-api-key=openai-key",
+      "--brave-api-key=brave-key",
+      "--serpapi-key=serpapi-key",
+      "--web-search-provider=brave",
+      "--stt-provider=openai",
+      "--stt-language-hint=en",
+      "--whisper-model-path=/models/ggml.bin",
+      "--cookies-from-browser=chrome",
+      "--cookies-profile=Default",
+      "--youtube-cookies-file=/cookies/youtube.txt",
+      "--x-cookies-file=/cookies/x.txt",
+      "--instagram-cookies-file=/cookies/instagram.txt",
+      "--tiktok-cookies-file=/cookies/tiktok.txt",
+    ]);
+
+    assert.equal(parsed.openaiApiKey, "openai-key");
+    assert.equal(parsed.braveApiKey, "brave-key");
+    assert.equal(parsed.serpapiKey, "serpapi-key");
+    assert.equal(parsed.webSearchProvider, "brave");
+    assert.equal(parsed.sttProvider, "openai");
+    assert.equal(parsed.sttLanguageHint, "en");
+    assert.equal(parsed.whisperModelPath, "/models/ggml.bin");
+    assert.equal(parsed.cookiesFromBrowser, "chrome");
+    assert.equal(parsed.cookiesProfile, "Default");
+    assert.equal(parsed.youtubeCookiesFile, "/cookies/youtube.txt");
+    assert.equal(parsed.xCookiesFile, "/cookies/x.txt");
+    assert.equal(parsed.instagramCookiesFile, "/cookies/instagram.txt");
+    assert.equal(parsed.tiktokCookiesFile, "/cookies/tiktok.txt");
+  });
 });
 
 describe("buildServerEntry", () => {
@@ -133,6 +171,43 @@ describe("buildServerEntry", () => {
     assert.equal(entry.env!.GEMINI_API_KEY, "gem-key-456");
     assert.equal(entry.env!.GOOGLE_API_KEY, "google-key-789");
     assert.equal(entry.env!.VIDLENS_DATA_DIR, "/home/user/.vidlens");
+  });
+
+  it("includes universal optional env vars when provided", () => {
+    const entry = buildServerEntry({
+      nodePath: "/usr/local/bin/node",
+      cliPath: "/opt/vidlens/dist/cli.js",
+      dataDir: "/home/user/.vidlens",
+      extraEnv: {
+        OPENAI_API_KEY: "openai-key",
+        BRAVE_API_KEY: "brave-key",
+        SERPAPI_KEY: "serpapi-key",
+        VIDLENS_WEB_SEARCH_PROVIDER: "brave",
+        VIDLENS_STT_PROVIDER: "openai",
+        VIDLENS_STT_LANGUAGE_HINT: "en",
+        VIDLENS_WHISPER_MODEL_PATH: "/models/ggml.bin",
+        VIDLENS_COOKIES_FROM_BROWSER: "chrome",
+        VIDLENS_COOKIES_PROFILE: "Default",
+        VIDLENS_YOUTUBE_COOKIES_FILE: "/cookies/youtube.txt",
+        VIDLENS_X_COOKIES_FILE: "/cookies/x.txt",
+        VIDLENS_INSTAGRAM_COOKIES_FILE: "/cookies/instagram.txt",
+        VIDLENS_TIKTOK_COOKIES_FILE: "/cookies/tiktok.txt",
+      },
+    });
+
+    assert.equal(entry.env!.OPENAI_API_KEY, "openai-key");
+    assert.equal(entry.env!.BRAVE_API_KEY, "brave-key");
+    assert.equal(entry.env!.SERPAPI_KEY, "serpapi-key");
+    assert.equal(entry.env!.VIDLENS_WEB_SEARCH_PROVIDER, "brave");
+    assert.equal(entry.env!.VIDLENS_STT_PROVIDER, "openai");
+    assert.equal(entry.env!.VIDLENS_STT_LANGUAGE_HINT, "en");
+    assert.equal(entry.env!.VIDLENS_WHISPER_MODEL_PATH, "/models/ggml.bin");
+    assert.equal(entry.env!.VIDLENS_COOKIES_FROM_BROWSER, "chrome");
+    assert.equal(entry.env!.VIDLENS_COOKIES_PROFILE, "Default");
+    assert.equal(entry.env!.VIDLENS_YOUTUBE_COOKIES_FILE, "/cookies/youtube.txt");
+    assert.equal(entry.env!.VIDLENS_X_COOKIES_FILE, "/cookies/x.txt");
+    assert.equal(entry.env!.VIDLENS_INSTAGRAM_COOKIES_FILE, "/cookies/instagram.txt");
+    assert.equal(entry.env!.VIDLENS_TIKTOK_COOKIES_FILE, "/cookies/tiktok.txt");
   });
 
   it("preserves existing env vars from existingEntry", () => {
@@ -587,7 +662,7 @@ describe("setup command via runCli", () => {
     assert.ok(output.includes("Claude Code"), "should include Claude Code section");
   });
 
-  it("Claude Code write targets ~/.claude/settings.json", async () => {
+  it("Claude Code write targets ~/.claude.json user MCP registry", async () => {
     const configDir = mkdtempSync(join(tmpdir(), "vidlens-mcp-setup-ccwrite-"));
     const stdout: string[] = [];
 
@@ -615,11 +690,308 @@ describe("setup command via runCli", () => {
       now: () => new Date("2026-03-16T00:00:00.000Z"),
     });
 
-    const settingsPath = join(configDir, ".claude", "settings.json");
-    assert.ok(existsSync(settingsPath), "settings.json should have been created");
+    const settingsPath = join(configDir, ".claude.json");
+    assert.ok(existsSync(settingsPath), ".claude.json should have been created");
     const content = JSON.parse(readFileSync(settingsPath, "utf8")) as JsonObject;
     const servers = content.mcpServers as JsonObject;
-    assert.ok(servers["vidlens-mcp"], "vidlens-mcp should be registered in settings.json");
+    assert.ok(servers["vidlens-mcp"], "vidlens-mcp should be registered in .claude.json");
+  });
+
+  it("Claude Code setup uses claude mcp add-json when the CLI is available", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "vidlens-mcp-setup-cccli-"));
+    const stdout: string[] = [];
+    const calls: Array<{ command: string; args: string[] }> = [];
+
+    await runCli(["setup", "--client=claude_code"], {
+      startServer: async () => undefined,
+      createService: () => ({}) as unknown as YouTubeService,
+      packageMeta: { name: "vidlens-mcp", version: "1.0.0" },
+      detectClients: () => [
+        {
+          clientId: "claude_code" as const,
+          name: "Claude Code",
+          detected: true,
+          supportLevel: "supported" as const,
+          installSurface: "mixed" as const,
+          configPath: join(configDir, ".claude.json"),
+          binary: "/usr/local/bin/claude",
+        },
+      ],
+      writeStdout: (text) => { stdout.push(text); },
+      writeStderr: () => undefined,
+      env: {},
+      platform: "darwin",
+      homeDir: configDir,
+      nodePath: "/usr/local/bin/node",
+      cliPath: "/repo/dist/cli.js",
+      now: () => new Date("2026-03-16T00:00:00.000Z"),
+      runCommand: (command, args) => {
+        calls.push({ command, args });
+        if (args.join(" ") === "mcp list") {
+          return {
+            status: 0,
+            stdout: "vidlens-mcp: /usr/local/bin/node /repo/dist/cli.js serve - ✓ Connected\n",
+            stderr: "",
+          };
+        }
+        return { status: 0, stdout: "Added stdio MCP server vidlens-mcp to user config\n", stderr: "" };
+      },
+    });
+
+    const addCall = calls.find((call) => call.args[0] === "mcp" && call.args[1] === "add-json");
+    assert.ok(addCall, "setup should register through claude mcp add-json");
+    assert.equal(addCall.args[3], "user");
+    assert.equal(addCall.args[4], "vidlens-mcp");
+    const entry = JSON.parse(addCall.args[5] ?? "{}") as JsonObject;
+    assert.equal(entry.command, "/usr/local/bin/node");
+    assert.deepEqual(entry.args, ["/repo/dist/cli.js", "serve"]);
+    assert.ok(stdout.join("").includes("Claude Code CLI registry"), "output should explain the CLI registry method");
+    assert.ok(stdout.join("").includes("connected in `claude mcp list`"), "output should report verification");
+    assert.ok(!existsSync(join(configDir, ".claude.json")), "test fake CLI did not need direct file fallback");
+  });
+
+  it("Claude Code setup falls back to ~/.claude.json when claude mcp add-json fails", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "vidlens-mcp-setup-ccfallback-"));
+    const stdout: string[] = [];
+
+    await runCli(["setup", "--client=claude_code"], {
+      startServer: async () => undefined,
+      createService: () => ({}) as unknown as YouTubeService,
+      packageMeta: { name: "vidlens-mcp", version: "1.0.0" },
+      detectClients: () => [
+        {
+          clientId: "claude_code" as const,
+          name: "Claude Code",
+          detected: true,
+          supportLevel: "supported" as const,
+          installSurface: "mixed" as const,
+          configPath: join(configDir, ".claude.json"),
+          binary: "/usr/local/bin/claude",
+        },
+      ],
+      writeStdout: (text) => { stdout.push(text); },
+      writeStderr: () => undefined,
+      env: {},
+      platform: "darwin",
+      homeDir: configDir,
+      nodePath: "/usr/local/bin/node",
+      cliPath: "/repo/dist/cli.js",
+      now: () => new Date("2026-03-16T00:00:00.000Z"),
+      runCommand: (_command, args) => {
+        if (args.join(" ") === "mcp list") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        return { status: 1, stdout: "", stderr: "failed" };
+      },
+    });
+
+    const settingsPath = join(configDir, ".claude.json");
+    assert.ok(existsSync(settingsPath), ".claude.json should be written as a fallback");
+    const content = JSON.parse(readFileSync(settingsPath, "utf8")) as JsonObject;
+    const servers = content.mcpServers as JsonObject;
+    assert.ok(servers["vidlens-mcp"], "vidlens-mcp should be registered in fallback file");
+    assert.ok(stdout.join("").includes("direct user registry file"), "output should explain fallback method");
+    assert.ok(stdout.join("").includes("claude mcp add-json was unavailable or failed"), "output should explain why fallback was used");
+  });
+
+  it("Claude Code setup avoids passing secret env values through claude mcp add-json args", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "vidlens-mcp-setup-ccsecret-"));
+    const stdout: string[] = [];
+    const calls: Array<{ command: string; args: string[] }> = [];
+
+    await runCli(["setup", "--client=claude_code", "--youtube-api-key=yt-secret"], {
+      startServer: async () => undefined,
+      createService: () => ({}) as unknown as YouTubeService,
+      packageMeta: { name: "vidlens-mcp", version: "1.0.0" },
+      detectClients: () => [
+        {
+          clientId: "claude_code" as const,
+          name: "Claude Code",
+          detected: true,
+          supportLevel: "supported" as const,
+          installSurface: "mixed" as const,
+          configPath: join(configDir, ".claude.json"),
+          binary: "/usr/local/bin/claude",
+        },
+      ],
+      writeStdout: (text) => { stdout.push(text); },
+      writeStderr: () => undefined,
+      env: {},
+      platform: "darwin",
+      homeDir: configDir,
+      nodePath: "/usr/local/bin/node",
+      cliPath: "/repo/dist/cli.js",
+      now: () => new Date("2026-03-16T00:00:00.000Z"),
+      runCommand: (command, args) => {
+        calls.push({ command, args });
+        return {
+          status: 0,
+          stdout: "vidlens-mcp: /usr/local/bin/node /repo/dist/cli.js serve - ✓ Connected\n",
+          stderr: "",
+        };
+      },
+    });
+
+    assert.ok(!calls.some((call) => call.args[0] === "mcp" && call.args[1] === "add-json"), "secret-bearing config should not be passed through add-json args");
+    assert.ok(existsSync(join(configDir, ".claude.json")), ".claude.json should be written directly");
+    assert.ok(stdout.join("").includes("keeps API keys and cookie settings out of command arguments"));
+  });
+
+  it("setup reuses existing MCP env values instead of re-prompting for saved keys", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "vidlens-mcp-setup-existing-env-"));
+    const settingsPath = join(configDir, ".claude.json");
+    writeFileSync(settingsPath, JSON.stringify({
+      mcpServers: {
+        "vidlens-mcp": {
+          command: "/usr/local/bin/node",
+          args: ["/repo/dist/cli.js", "serve"],
+          env: {
+            VIDLENS_DATA_DIR: "/tmp/vidlens",
+            YOUTUBE_API_KEY: "yt-existing",
+            GEMINI_API_KEY: "gem-existing",
+            OPENAI_API_KEY: "openai-existing",
+            BRAVE_API_KEY: "brave-existing",
+            VIDLENS_COOKIES_FROM_BROWSER: "chrome",
+          },
+        },
+      },
+    }), "utf8");
+    const prompts: string[] = [];
+
+    await runCli(["setup", "--client=claude_code", "--print-only"], {
+      startServer: async () => undefined,
+      createService: () => ({}) as unknown as YouTubeService,
+      packageMeta: { name: "vidlens-mcp", version: "1.0.0" },
+      detectClients: () => [
+        {
+          clientId: "claude_code" as const,
+          name: "Claude Code",
+          detected: true,
+          supportLevel: "supported" as const,
+          installSurface: "mixed" as const,
+          configPath: settingsPath,
+        },
+      ],
+      writeStdout: () => undefined,
+      writeStderr: () => undefined,
+      env: {},
+      platform: "darwin",
+      homeDir: configDir,
+      nodePath: "/usr/local/bin/node",
+      cliPath: "/repo/dist/cli.js",
+      now: () => new Date("2026-03-16T00:00:00.000Z"),
+      promptLine: async (question) => {
+        prompts.push(question);
+        return "n";
+      },
+    });
+
+    assert.ok(!prompts.some((prompt) => prompt.includes("Key [Enter to skip]")), "saved key env should suppress first-run key prompts");
+  });
+
+  it("setup does not prompt for or persist ambient shell keys by default", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "vidlens-mcp-setup-zero-config-"));
+    const binDir = join(configDir, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const fakeYtDlp = join(binDir, "yt-dlp");
+    writeFileSync(fakeYtDlp, "#!/bin/sh\nexit 0\n");
+    chmodSync(fakeYtDlp, 0o755);
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const prompts: string[] = [];
+
+    await runCli(["setup", "--client=codex", "--print-only"], {
+      startServer: async () => undefined,
+      createService: () => ({}) as unknown as YouTubeService,
+      packageMeta: { name: "vidlens-mcp", version: "1.0.0" },
+      detectClients: () => [
+        {
+          clientId: "codex" as const,
+          name: "Codex",
+          detected: true,
+          supportLevel: "supported" as const,
+          installSurface: "mixed" as const,
+          configPath: join(configDir, ".codex", "config.toml"),
+        },
+      ],
+      writeStdout: (text) => { stdout.push(text); },
+      writeStderr: (text) => { stderr.push(text); },
+      env: {
+        PATH: binDir,
+        OPENAI_API_KEY: "sk-shell-openai",
+        GEMINI_API_KEY: "shell-gemini",
+        YOUTUBE_API_KEY: "shell-youtube",
+        BRAVE_API_KEY: "shell-brave",
+      },
+      platform: "darwin",
+      homeDir: configDir,
+      nodePath: "/usr/local/bin/node",
+      cliPath: "/repo/dist/cli.js",
+      now: () => new Date("2026-03-16T00:00:00.000Z"),
+      promptLine: async (question) => {
+        prompts.push(question);
+        return "";
+      },
+    });
+
+    const output = stdout.join("");
+    const setupOutput = stderr.join("");
+    assert.ok(setupOutput.includes("Capability uplift"));
+    assert.ok(setupOutput.includes("VidLens starts free"));
+    assert.ok(setupOutput.includes("More video types need more helpers"));
+    assert.ok(setupOutput.includes("Keys are only stored when you pass them or run --advanced"));
+    assert.ok(setupOutput.includes("OPENAI_API_KEY"));
+    assert.ok(setupOutput.includes("BRAVE_API_KEY or SERPAPI_KEY"));
+    assert.ok(setupOutput.includes("Continuing with free core setup"));
+    assert.deepEqual(prompts, []);
+    assert.ok(!output.includes("OPENAI_API_KEY ="), "ambient OpenAI key should not be persisted");
+    assert.ok(!output.includes("GEMINI_API_KEY ="), "ambient Gemini key should not be persisted");
+    assert.ok(!output.includes("YOUTUBE_API_KEY ="), "ambient YouTube key should not be persisted");
+    assert.ok(!output.includes("BRAVE_API_KEY ="), "ambient Brave key should not be persisted");
+    assert.ok(!output.includes("sk-shell-openai"), "ambient OpenAI key value should not be printed");
+    assert.ok(!output.includes("shell-gemini"), "ambient Gemini key value should not be printed");
+    assert.ok(!output.includes("shell-youtube"), "ambient YouTube key value should not be printed");
+    assert.ok(!output.includes("shell-brave"), "ambient Brave key value should not be printed");
+  });
+
+  it("setup explains missing ffmpeg before social visual indexing fails", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "vidlens-mcp-setup-ffmpeg-"));
+    const binDir = join(configDir, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const fakeYtDlp = join(binDir, "yt-dlp");
+    writeFileSync(fakeYtDlp, "#!/bin/sh\nexit 0\n");
+    chmodSync(fakeYtDlp, 0o755);
+    const stderr: string[] = [];
+
+    await runCli(["setup", "--client=codex", "--print-only", "--advanced"], {
+      startServer: async () => undefined,
+      createService: () => ({}) as unknown as YouTubeService,
+      packageMeta: { name: "vidlens-mcp", version: "1.0.0" },
+      detectClients: () => [
+        {
+          clientId: "codex" as const,
+          name: "Codex",
+          detected: true,
+          supportLevel: "supported" as const,
+          installSurface: "mixed" as const,
+          configPath: join(configDir, ".codex", "config.toml"),
+        },
+      ],
+      writeStdout: () => undefined,
+      writeStderr: (text) => { stderr.push(text); },
+      env: { PATH: binDir },
+      platform: "darwin",
+      homeDir: configDir,
+      nodePath: "/usr/local/bin/node",
+      cliPath: "/repo/dist/cli.js",
+      now: () => new Date("2026-03-16T00:00:00.000Z"),
+      promptLine: async () => "n",
+    });
+
+    const output = stderr.join("");
+    assert.ok(output.includes("ffmpeg/ffprobe not found"));
+    assert.ok(output.includes("Instagram/TikTok/X reels"));
+    assert.ok(output.includes("brew install ffmpeg"));
   });
 
   it("--print-only does not write files for Claude Code", async () => {
@@ -649,7 +1021,168 @@ describe("setup command via runCli", () => {
       now: () => new Date("2026-03-16T00:00:00.000Z"),
     });
 
-    const settingsPath = join(configDir, ".claude", "settings.json");
-    assert.ok(!existsSync(settingsPath), "settings.json should NOT be created in print-only mode");
+    const settingsPath = join(configDir, ".claude.json");
+    assert.ok(!existsSync(settingsPath), ".claude.json should NOT be created in print-only mode");
+  });
+
+  it("advanced setup prompts explain defaults and report detected STT/search choices", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "vidlens-mcp-setup-advanced-prompts-"));
+    const binDir = join(configDir, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const fakeYtDlp = join(binDir, "yt-dlp");
+    writeFileSync(fakeYtDlp, "#!/bin/sh\nexit 0\n");
+    chmodSync(fakeYtDlp, 0o755);
+
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const answers = ["", "en", "", "", "chrome", "person@example.com", "n"];
+
+    await runCli([
+      "setup",
+      "--client=codex",
+      "--print-only",
+      "--advanced",
+      "--youtube-api-key=yt-key",
+      "--gemini-api-key=gem-key",
+      "--openai-api-key=openai-key",
+      "--brave-api-key=brave-key",
+    ], {
+      startServer: async () => undefined,
+      createService: () => ({}) as unknown as YouTubeService,
+      packageMeta: { name: "vidlens-mcp", version: "1.0.0" },
+      detectClients: () => [
+        {
+          clientId: "codex" as const,
+          name: "Codex",
+          detected: true,
+          supportLevel: "supported" as const,
+          installSurface: "mixed" as const,
+          configPath: join(configDir, ".codex", "config.toml"),
+        },
+      ],
+      writeStdout: (text) => { stdout.push(text); },
+      writeStderr: (text) => { stderr.push(text); },
+      env: { PATH: binDir },
+      platform: "darwin",
+      homeDir: configDir,
+      nodePath: "/usr/local/bin/node",
+      cliPath: "/repo/dist/cli.js",
+      now: () => new Date("2026-03-16T00:00:00.000Z"),
+      promptLine: async () => answers.shift() ?? "",
+    });
+
+    const output = stderr.join("");
+    assert.ok(output.includes("Speech-to-text"));
+    assert.ok(output.includes("Auto order: local whisper.cpp -> Gemini -> OpenAI -> none."));
+    assert.ok(output.includes("Selected STT:"));
+    assert.ok(output.includes("gemini"));
+    assert.ok(output.includes("Web search"));
+    assert.ok(output.includes("Auto order: Brave -> SerpAPI -> DuckDuckGo-lite."));
+    assert.ok(output.includes("Selected Web search:"));
+    assert.ok(output.includes("brave"));
+    assert.ok(output.includes("Recommended: enter the browser where you are logged into X/Instagram/TikTok."));
+    assert.ok(output.includes("Selected Cookies:"));
+    assert.ok(output.includes("browser:chrome"));
+    assert.ok(output.includes("That looks like an email address."));
+    assert.ok(!stdout.join("").includes("person@example.com"));
+  });
+
+  it("Codex print-only setup includes universal env and redacts API key values", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "vidlens-mcp-setup-codex-universal-"));
+    const stdout: string[] = [];
+
+    await runCli([
+      "setup",
+      "--client=codex",
+      "--print-only",
+      "--openai-api-key=sk-openai-test",
+      "--brave-api-key=brave-test-key",
+      "--stt-provider=openai",
+      "--cookies-from-browser=chrome",
+      "--cookies-profile=Default",
+    ], {
+      startServer: async () => undefined,
+      createService: () => ({}) as unknown as YouTubeService,
+      packageMeta: { name: "vidlens-mcp", version: "1.0.0" },
+      detectClients: () => [
+        {
+          clientId: "codex" as const,
+          name: "Codex",
+          detected: true,
+          supportLevel: "supported" as const,
+          installSurface: "mixed" as const,
+          configPath: join(configDir, ".codex", "config.toml"),
+        },
+      ],
+      writeStdout: (text) => { stdout.push(text); },
+      writeStderr: () => undefined,
+      env: {},
+      platform: "darwin",
+      homeDir: configDir,
+      nodePath: "/usr/local/bin/node",
+      cliPath: "/repo/dist/cli.js",
+      now: () => new Date("2026-03-16T00:00:00.000Z"),
+      promptLine: async () => "n",
+    });
+
+    const output = stdout.join("");
+    assert.ok(output.includes("Codex"), "should include Codex section");
+    assert.ok(output.includes('OPENAI_API_KEY = "<set>"'), "should show OPENAI_API_KEY as configured but redacted");
+    assert.ok(output.includes('BRAVE_API_KEY = "<set>"'), "should show BRAVE_API_KEY as configured but redacted");
+    assert.ok(output.includes('VIDLENS_STT_PROVIDER = "openai"'), "should persist STT provider");
+    assert.ok(output.includes('VIDLENS_COOKIES_FROM_BROWSER = "chrome"'), "should persist browser cookie source");
+    assert.ok(output.includes('VIDLENS_COOKIES_PROFILE = "Default"'), "should persist browser cookie profile");
+    assert.ok(!output.includes("sk-openai-test"), "should not print raw OpenAI key");
+    assert.ok(!output.includes("brave-test-key"), "should not print raw Brave key");
+  });
+
+  it("Codex print-only setup redacts existing configured secrets", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "vidlens-mcp-setup-codex-redact-existing-"));
+    const codexConfigPath = join(configDir, ".codex", "config.toml");
+    mkdirSync(dirname(codexConfigPath), { recursive: true });
+    writeFileSync(codexConfigPath, `
+[mcp_servers.vidlens-mcp]
+command = "/usr/local/bin/node"
+args = ["/repo/dist/cli.js", "serve"]
+
+[mcp_servers.vidlens-mcp.env]
+VIDLENS_DATA_DIR = "/tmp/vidlens"
+OPENAI_API_KEY = "existing-openai-secret"
+BRAVE_API_KEY = "existing-brave-secret"
+VIDLENS_X_COOKIES_FILE = "/secret/x-cookies.txt"
+`, "utf8");
+    const stdout: string[] = [];
+
+    await runCli(["setup", "--client=codex", "--print-only"], {
+      startServer: async () => undefined,
+      createService: () => ({}) as unknown as YouTubeService,
+      packageMeta: { name: "vidlens-mcp", version: "1.0.0" },
+      detectClients: () => [
+        {
+          clientId: "codex" as const,
+          name: "Codex",
+          detected: true,
+          supportLevel: "supported" as const,
+          installSurface: "mixed" as const,
+          configPath: codexConfigPath,
+        },
+      ],
+      writeStdout: (text) => { stdout.push(text); },
+      writeStderr: () => undefined,
+      env: {},
+      platform: "darwin",
+      homeDir: configDir,
+      nodePath: "/usr/local/bin/node",
+      cliPath: "/repo/dist/cli.js",
+      now: () => new Date("2026-03-16T00:00:00.000Z"),
+    });
+
+    const output = stdout.join("");
+    assert.ok(output.includes('OPENAI_API_KEY = "<set>"'));
+    assert.ok(output.includes('BRAVE_API_KEY = "<set>"'));
+    assert.ok(output.includes('VIDLENS_X_COOKIES_FILE = "<set>"'));
+    assert.ok(!output.includes("existing-openai-secret"));
+    assert.ok(!output.includes("existing-brave-secret"));
+    assert.ok(!output.includes("/secret/x-cookies.txt"));
   });
 });
