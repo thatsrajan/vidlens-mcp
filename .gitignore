@@ -15,3 +15,9 @@ docs/
 assets/v2/
 *.mp4
 mcp-publisher
+
+# Local Remotion exports and experimental social-video compositions.
+my-video/public/
+my-video/src/LinkedInComposition.tsx
+my-video/src/lib/pixel-theme.ts
+my-video/src/scenes/linkedin/
