@@ -113,6 +113,7 @@ describe("parseCliArgs for setup", () => {
     const parsed = parseCliArgs([
       "setup",
       "--openai-api-key=openai-key",
+      "--scrapecreators-api-key=scrape-key",
       "--brave-api-key=brave-key",
       "--serpapi-key=serpapi-key",
       "--web-search-provider=brave",
@@ -128,6 +129,7 @@ describe("parseCliArgs for setup", () => {
     ]);
 
     assert.equal(parsed.openaiApiKey, "openai-key");
+    assert.equal(parsed.scrapeCreatorsApiKey, "scrape-key");
     assert.equal(parsed.braveApiKey, "brave-key");
     assert.equal(parsed.serpapiKey, "serpapi-key");
     assert.equal(parsed.webSearchProvider, "brave");
@@ -180,6 +182,7 @@ describe("buildServerEntry", () => {
       dataDir: "/home/user/.vidlens",
       extraEnv: {
         OPENAI_API_KEY: "openai-key",
+        SCRAPECREATORS_API_KEY: "scrape-key",
         BRAVE_API_KEY: "brave-key",
         SERPAPI_KEY: "serpapi-key",
         VIDLENS_WEB_SEARCH_PROVIDER: "brave",
@@ -196,6 +199,7 @@ describe("buildServerEntry", () => {
     });
 
     assert.equal(entry.env!.OPENAI_API_KEY, "openai-key");
+    assert.equal(entry.env!.SCRAPECREATORS_API_KEY, "scrape-key");
     assert.equal(entry.env!.BRAVE_API_KEY, "brave-key");
     assert.equal(entry.env!.SERPAPI_KEY, "serpapi-key");
     assert.equal(entry.env!.VIDLENS_WEB_SEARCH_PROVIDER, "brave");
@@ -1045,6 +1049,7 @@ describe("setup command via runCli", () => {
       "--youtube-api-key=yt-key",
       "--gemini-api-key=gem-key",
       "--openai-api-key=openai-key",
+      "--scrapecreators-api-key=scrape-key",
       "--brave-api-key=brave-key",
     ], {
       startServer: async () => undefined,
@@ -1096,6 +1101,7 @@ describe("setup command via runCli", () => {
       "--client=codex",
       "--print-only",
       "--openai-api-key=sk-openai-test",
+      "--scrapecreators-api-key=sc-test-key",
       "--brave-api-key=brave-test-key",
       "--stt-provider=openai",
       "--cookies-from-browser=chrome",
@@ -1128,6 +1134,7 @@ describe("setup command via runCli", () => {
     const output = stdout.join("");
     assert.ok(output.includes("Codex"), "should include Codex section");
     assert.ok(output.includes('OPENAI_API_KEY = "<set>"'), "should show OPENAI_API_KEY as configured but redacted");
+    assert.ok(output.includes('SCRAPECREATORS_API_KEY = "<set>"'), "should show SCRAPECREATORS_API_KEY as configured but redacted");
     assert.ok(output.includes('BRAVE_API_KEY = "<set>"'), "should show BRAVE_API_KEY as configured but redacted");
     assert.ok(output.includes('VIDLENS_STT_PROVIDER = "openai"'), "should persist STT provider");
     assert.ok(output.includes('VIDLENS_COOKIES_FROM_BROWSER = "chrome"'), "should persist browser cookie source");

@@ -6,7 +6,7 @@
   <a href="https://www.npmjs.com/package/vidlens-mcp"><img src="https://img.shields.io/npm/v/vidlens-mcp?style=flat-square&color=red" alt="npm" /></a>
   <a href="https://github.com/thatsrajan/vidlens-mcp/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License" /></a>
   <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-compatible-green?style=flat-square" alt="MCP" /></a>
-  <img src="https://img.shields.io/badge/tools-45-orange?style=flat-square" alt="45 tools" />
+  <img src="https://img.shields.io/badge/tools-46-orange?style=flat-square" alt="46 tools" />
   <img src="https://img.shields.io/badge/zero--config-✓-brightgreen?style=flat-square" alt="Zero Config" />
 </p>
 
@@ -93,7 +93,7 @@ Download videos/audio/thumbnails. Extract keyframes. Index comments for semantic
 <tr><td>🛡️ <strong>Reliability</strong></td><td>✅ Three-tier fallback on every tool</td><td>❌ Single point of failure - API down = broken</td></tr>
 <tr><td>🧠 <strong>Intelligence</strong></td><td>✅ Sentiment, trends, content gaps, hooks</td><td>❌ Raw data dumps - you do the analysis</td></tr>
 <tr><td>📦 <strong>Token efficiency</strong></td><td>✅ 75-87% smaller responses</td><td>❌ Verbose JSON with thumbnails, etags, junk</td></tr>
-<tr><td>🔬 <strong>Depth</strong></td><td>✅ 45 tools across 11 modules</td><td>⚠️ 1-5 tools, mostly transcripts only</td></tr>
+<tr><td>🔬 <strong>Depth</strong></td><td>✅ 46 tools across 11 modules</td><td>⚠️ 1-5 tools, mostly transcripts only</td></tr>
 <tr><td>🖼️ <strong>Visual evidence</strong></td><td>✅ Returns actual frame paths + timestamps, not just text hits</td><td>⚠️ Usually transcript-only or raw frame dumps</td></tr>
 <tr><td>⚖️ <strong>Trademark</strong></td><td>✅ Compliant naming</td><td>⚠️ Most violate YouTube trademark</td></tr>
 </table>
@@ -158,7 +158,7 @@ Start with "Search YouTube" to activate VidLens:
 
 ---
 
-## 🧰 Tools - 44 across 11 modules
+## 🧰 Tools - 46 across 11 modules
 
 ### 🔍 Explore - YouTube Discovery & Research
 *The front door — one prompt, full pipeline*
@@ -227,7 +227,8 @@ Start with "Search YouTube" to activate VidLens:
 | Tool | What it does |
 |---|---|
 | `inspectVideoSource` | Resolve YouTube, X/Twitter, Instagram, TikTok, generic URLs, and local files into source metadata and capability flags |
-| `searchVideoSources` | Search native YouTube and local assets, with configurable Brave/SerpAPI/DuckDuckGo fallback for social/web video discovery |
+| `searchVideoSources` | Search native YouTube and local assets, with ScrapeCreators support for TikTok/Instagram plus configurable Brave/SerpAPI/DuckDuckGo fallback |
+| `searchSocialTrends` | Search social platforms through ScrapeCreators and return a playlist-like ranked list with engagement metrics and importable URLs where available |
 | `importVideoSources` | Import URLs or local files into the local media store, optionally building a visual index or transcript |
 | `transcribeVideoSource` | Transcribe YouTube, social/generic URLs, and local files into the transcript knowledge base via native captions or configured STT |
 
@@ -291,13 +292,14 @@ VidLens works **without any API keys**. Add them to unlock more capabilities:
 | `YOUTUBE_API_KEY` | Better metadata, comment API, search via YouTube API | ✅ Free tier (10,000 units/day) | [Google Cloud Console](https://console.cloud.google.com/) → APIs → Enable YouTube Data API v3 → Credentials → Create API Key |
 | `GEMINI_API_KEY` | Higher-quality embeddings for semantic search (768d vs 384d) | ✅ Free tier | [Google AI Studio](https://aistudio.google.com/) → Get API Key |
 | `OPENAI_API_KEY` | Optional STT provider for `transcribeVideoSource` | Paid/free trial varies | [OpenAI Platform](https://platform.openai.com/) |
+| `SCRAPECREATORS_API_KEY` | Direct social search/trending for TikTok, Instagram, Threads, Pinterest, Reddit, and supported endpoints | 100 free credits, paid after | [ScrapeCreators](https://app.scrapecreators.com/) |
 | `BRAVE_API_KEY` / `SERPAPI_KEY` | Optional structured web search for social/generic URL discovery | Varies | Brave Search API or SerpAPI |
 
 > ⚠️ **These are separate keys from separate Google services.** A Gemini key will NOT work for YouTube API calls and vice versa. Create them independently.
 
 ```bash
 # Configure via setup wizard. It prompts for YouTube, Gemini, OpenAI,
-# Brave/SerpAPI, STT, browser cookies, and platform cookies.
+# ScrapeCreators, Brave/SerpAPI, STT, browser cookies, and platform cookies.
 npx vidlens-mcp setup
 
 # Or provide everything non-interactively.
@@ -305,6 +307,7 @@ npx vidlens-mcp setup \
   --youtube-api-key YOUR_YOUTUBE_KEY \
   --gemini-api-key YOUR_GEMINI_KEY \
   --openai-api-key YOUR_OPENAI_KEY \
+  --scrapecreators-api-key YOUR_SCRAPECREATORS_KEY \
   --brave-api-key YOUR_BRAVE_KEY \
   --stt-provider auto \
   --cookies-from-browser chrome
@@ -313,6 +316,7 @@ npx vidlens-mcp setup \
 export YOUTUBE_API_KEY=your_youtube_key
 export GEMINI_API_KEY=your_gemini_key
 export OPENAI_API_KEY=your_openai_key
+export SCRAPECREATORS_API_KEY=your_scrapecreators_key
 export BRAVE_API_KEY=your_brave_key
 ```
 

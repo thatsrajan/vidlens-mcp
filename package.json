@@ -1,8 +1,8 @@
 {
   "name": "vidlens-mcp",
   "mcpName": "io.github.thatsrajan/vidlens-mcp",
-  "version": "1.3.0",
-  "description": "VidLens MCP — video as a queryable local asset for AI agents. 45 tools across YouTube, social video URLs, local media, semantic search, transcription, and visual search.",
+  "version": "1.3.1",
+  "description": "VidLens MCP — video as a queryable local asset for AI agents. 46 tools across YouTube, social video URLs, local media, semantic search, transcription, and visual search.",
   "repository": {
     "type": "git",
     "url": "https://github.com/thatsrajan/vidlens-mcp.git"
@@ -35,7 +35,7 @@
     "setup": "npm run build --silent && node dist/cli.js setup",
     "doctor": "npm run build --silent && node dist/cli.js doctor",
     "update-deps": "npm run build --silent && node dist/cli.js update-deps",
-    "postinstall": "node -e \"console.log('\\nVidLens MCP installed. From a checkout run: npm run setup. For the global command run: npm install -g .\\n')\"",
+    "postinstall": "node -e \"console.log('\\nVidLens MCP installed. Run: npx vidlens-mcp setup. Start the server with: npx vidlens-mcp serve. Docs: https://github.com/thatsrajan/vidlens-mcp\\n')\"",
     "start": "node dist/cli.js",
     "test": "npm run build && node --test dist/test/*.test.js",
     "release:verify": "npm test && npm pack --dry-run",
@@ -59,9 +59,11 @@
     "model-context-protocol",
     "yt-dlp",
     "semantic-search",
-    "sentiment-analysis"
+    "sentiment-analysis",
+    "social-search",
+    "scrapecreators"
   ],
-  "author": "",
+  "author": "Rajan",
   "license": "MIT",
   "engines": {
     "node": ">=22"

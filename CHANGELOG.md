@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-06-19
+
+### Added
+- `searchSocialTrends` for ScrapeCreators-backed social discovery across TikTok, Instagram, Threads, Pinterest, Reddit, and handle-based X lookups.
+- `SCRAPECREATORS_API_KEY` setup/config support, plus ScrapeCreators-backed TikTok/Instagram results in `searchVideoSources` when configured.
+
+### Changed
+- Improved npm install messaging and package metadata for public npm users.
+
 ## [1.3.0] - 2026-05-29
 
 ### Added

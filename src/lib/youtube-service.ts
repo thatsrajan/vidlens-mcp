@@ -37,6 +37,7 @@ import { assessYtDlpFreshness, fetchLatestYtDlpVersion } from "./diagnostics/yt-
 import { probeJsRuntime } from "./diagnostics/js-runtime.js";
 import { allProviders, providerForSource } from "./providers/registry.js";
 import { redactError } from "./redactor.js";
+import { ScrapeCreatorsClient, buildSocialPlaylist, sampleSocialTrends } from "./scrapecreators-client.js";
 import { selectSttProvider } from "./stt/selector.js";
 import { selectWebSearchProvider } from "./web-search/selector.js";
 import {
@@ -134,6 +135,8 @@ import type {
   ScoreHookPatternsOutput,
   SearchCommentsInput,
   SearchCommentsOutput,
+  SearchSocialTrendsInput,
+  SearchSocialTrendsOutput,
   SearchTranscriptsInput,
   SearchTranscriptsOutput,
   SearchVisualContentInput,
@@ -158,6 +161,7 @@ import { resolveVideoSource, type VideoSourceRef } from "./video-source.js";
 
 interface YouTubeServiceConfig {
   apiKey?: string;
+  scrapeCreatorsApiKey?: string;
   dryRun?: boolean;
   ytDlpBinary?: string;
   dataDir?: string;
@@ -175,6 +179,7 @@ const FALLBACK_DEPTH: Record<SourceTier, 0 | 1 | 2 | 3> = {
   youtube_api: 0,
   yt_dlp: 1,
   page_extract: 2,
+  scrapecreators: 1,
   none: 3,
 };
 
@@ -191,6 +196,7 @@ export class YouTubeService {
   private readonly dryRun: boolean;
   private readonly dataDir: string;
   private readonly ytDlpBinary?: string;
+  private readonly scrapeCreatorsApiKey?: string;
   private _knowledgeBase?: TranscriptKnowledgeBase;
   private _commentKnowledgeBase?: CommentKnowledgeBase;
   private _mediaStore?: MediaStore;
@@ -206,6 +212,7 @@ export class YouTubeService {
     this.dryRun = Boolean(config.dryRun);
     this.dataDir = config.dataDir ?? defaultServiceDataDir();
     this.ytDlpBinary = config.ytDlpBinary;
+    this.scrapeCreatorsApiKey = config.scrapeCreatorsApiKey ?? process.env.SCRAPECREATORS_API_KEY;
   }
 
   private get knowledgeBase(): TranscriptKnowledgeBase {
@@ -1635,6 +1642,73 @@ export class YouTubeService {
       });
     }
 
+    const scrapeCreatorsPlatforms = (["tiktok", "instagram"] as const).filter((platform) => requestedPlatforms.has(platform));
+    if (scrapeCreatorsPlatforms.length > 0 && !this.isDryRun(options)) {
+      if (this.scrapeCreatorsApiKey) {
+        try {
+          const social = await this.searchSocialTrends({
+            query,
+            platforms: scrapeCreatorsPlatforms,
+            maxResults,
+            freshness: "month",
+            sort: "engagement",
+          }, options);
+          let accepted = 0;
+          for (const item of social.results) {
+            try {
+              const source = resolveVideoSource(item.url);
+              if (source.platform !== item.platform) continue;
+              results.push({
+                platform: source.platform,
+                sourceId: source.sourceId,
+                assetKey: source.assetKey,
+                canonicalUrl: source.canonicalUrl,
+                title: item.title,
+                creator: item.creator,
+                durationSec: item.durationSec,
+                matchReason: "Matched by ScrapeCreators social search.",
+              });
+              accepted += 1;
+            } catch {
+              // Ignore non-importable social results.
+            }
+          }
+          for (const item of social.searched) {
+            searched.push({
+              platform: item.platform as "tiktok" | "instagram",
+              mode: "scrapecreators",
+              providerId: "scrapecreators",
+              status: item.status,
+              detail: item.detail,
+            });
+          }
+          if (accepted === 0) {
+            limitations.push("ScrapeCreators returned no importable TikTok/Instagram video URLs for this query.");
+          }
+        } catch (error) {
+          for (const platform of scrapeCreatorsPlatforms) {
+            searched.push({
+              platform,
+              mode: "scrapecreators",
+              providerId: "scrapecreators",
+              status: "partial",
+              detail: toMessage(error),
+            });
+          }
+        }
+      } else {
+        for (const platform of scrapeCreatorsPlatforms) {
+          searched.push({
+            platform,
+            mode: "scrapecreators",
+            providerId: "scrapecreators",
+            status: "skipped",
+            detail: "Set SCRAPECREATORS_API_KEY to enable ScrapeCreators social video search.",
+          });
+        }
+      }
+    }
+
     const webSearchSelection = selectWebSearchProvider(process.env);
     for (const platform of ["x", "instagram", "tiktok", "generic_url"] as const) {
       if (!requestedPlatforms.has(platform)) continue;
@@ -1741,6 +1815,46 @@ export class YouTubeService {
       maxResults: input.maxResults ?? 8,
       includeLocalAssets: input.includeLocalAssets,
     }, options);
+  }
+
+  async searchSocialTrends(input: SearchSocialTrendsInput, options: ServiceOptions = {}): Promise<SearchSocialTrendsOutput> {
+    const query = input.query?.trim();
+    if (!query) {
+      throw this.invalidInput("query cannot be empty");
+    }
+
+    const maxResults = clamp(input.maxResults ?? 12, 1, 50);
+    const normalizedInput = { ...input, query, maxResults };
+    const social = this.isDryRun(options)
+      ? sampleSocialTrends(normalizedInput)
+      : this.scrapeCreatorsApiKey
+        ? await new ScrapeCreatorsClient(this.scrapeCreatorsApiKey).search(normalizedInput)
+        : {
+          results: [],
+          searched: (normalizedInput.platforms?.length ? normalizedInput.platforms : ["tiktok", "instagram", "threads", "pinterest", "reddit", "x"] as const)
+            .map((platform) => ({
+              platform,
+              status: "skipped" as const,
+              detail: "Set SCRAPECREATORS_API_KEY to enable ScrapeCreators social trend search.",
+            })),
+          limitations: ["SCRAPECREATORS_API_KEY is not configured."],
+        };
+
+    const results = social.results
+      .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+      .slice(0, maxResults);
+
+    return {
+      query,
+      playlist: buildSocialPlaylist(query, results),
+      results,
+      searched: social.searched,
+      limitations: dedupeStrings([
+        ...social.limitations,
+        "ScrapeCreators coverage is endpoint-dependent; X currently supports profile/community retrieval rather than general keyword search.",
+      ]),
+      provenance: this.makeProvenance("scrapecreators", social.searched.some((item) => item.status !== "ok"), social.searched.map((item) => `${item.platform}: ${item.detail}`)),
+    };
   }
 
   async importVideoSources(input: ImportVideoSourcesInput, options: ServiceOptions = {}): Promise<ImportVideoSourcesOutput> {

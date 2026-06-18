@@ -140,6 +140,14 @@ async function main(): Promise<void> {
       }, { dryRun }),
     },
     {
+      name: "searchSocialTrends",
+      run: () => service.searchSocialTrends({
+        query: "AI coding benchmark",
+        platforms: ["tiktok", "instagram", "threads", "reddit"],
+        maxResults: 4,
+      }, { dryRun }),
+    },
+    {
       name: "importVideoSources",
       run: () => service.importVideoSources({
         sources: [sampleX, sampleInstagram, sampleTikTok, sampleGeneric],
