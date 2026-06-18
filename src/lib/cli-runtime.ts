@@ -62,6 +62,7 @@ export interface ParsedCliArgs {
   geminiApiKey?: string;
   googleApiKey?: string;
   openaiApiKey?: string;
+  scrapeCreatorsApiKey?: string;
   braveApiKey?: string;
   serpapiKey?: string;
   webSearchProvider?: string;
@@ -185,6 +186,7 @@ export async function runCli(args: string[], deps: Partial<CliDeps> = {}): Promi
       resolvedDeps.writeStderr(setupItem("YOUTUBE_API_KEY", "Better YouTube metadata, API search, subscriber counts; YouTube basics still work without it."));
       resolvedDeps.writeStderr(setupItem("GEMINI_API_KEY", "Semantic search, visual search, AI frame descriptions, and Gemini STT fallback."));
       resolvedDeps.writeStderr(setupItem("OPENAI_API_KEY", "Speech-to-text fallback for X/Instagram/TikTok, generic URLs, and local video files with no captions."));
+      resolvedDeps.writeStderr(setupItem("SCRAPECREATORS_API_KEY", "Direct social search/trending across TikTok, Instagram, Threads, Pinterest, Reddit, and supported ScrapeCreators endpoints."));
       resolvedDeps.writeStderr(setupItem("BRAVE_API_KEY or SERPAPI_KEY", "Structured web discovery for finding X/Instagram/TikTok/generic video URLs by query."));
       resolvedDeps.writeStderr(setupItem("Browser cookies", "Access to logged-in, gated, age-limited, or rate-limited social video URLs."));
 
@@ -192,12 +194,13 @@ export async function runCli(args: string[], deps: Partial<CliDeps> = {}): Promi
         const hasYoutubeKey = Boolean(parsed.youtubeApiKey || savedSetupEnv.YOUTUBE_API_KEY);
         const hasGeminiKey = Boolean(parsed.geminiApiKey || savedSetupEnv.GEMINI_API_KEY || parsed.googleApiKey || savedSetupEnv.GOOGLE_API_KEY);
         const hasOpenAiKey = Boolean(parsed.openaiApiKey || savedSetupEnv.OPENAI_API_KEY);
+        const hasScrapeCreatorsKey = Boolean(parsed.scrapeCreatorsApiKey || savedSetupEnv.SCRAPECREATORS_API_KEY);
         const hasWebSearchChoice = Boolean(
           parsed.braveApiKey || savedSetupEnv.BRAVE_API_KEY ||
           parsed.serpapiKey || savedSetupEnv.SERPAPI_KEY ||
           parsed.webSearchProvider || savedSetupEnv.VIDLENS_WEB_SEARCH_PROVIDER
         );
-        if (!hasYoutubeKey || !hasGeminiKey || !hasOpenAiKey || !hasWebSearchChoice) {
+        if (!hasYoutubeKey || !hasGeminiKey || !hasOpenAiKey || !hasScrapeCreatorsKey || !hasWebSearchChoice) {
           resolvedDeps.writeStderr(setupSection("Optional capabilities"));
           resolvedDeps.writeStderr(setupHelp("Skip anything you do not have. You can rerun setup later."));
         }
@@ -220,6 +223,13 @@ export async function runCli(args: string[], deps: Partial<CliDeps> = {}): Promi
           resolvedDeps.writeStderr(setupHelp("Get one: https://platform.openai.com/api-keys"));
           const key = await resolvedDeps.promptLine("    Key [Enter to skip]: ");
           if (key) parsed.openaiApiKey = key;
+          resolvedDeps.writeStderr("\n");
+        }
+        if (!hasScrapeCreatorsKey) {
+          resolvedDeps.writeStderr(setupItem("SCRAPECREATORS_API_KEY", "ScrapeCreators social search/trending for TikTok, Instagram, Threads, Pinterest, Reddit, and supported platforms."));
+          resolvedDeps.writeStderr(setupHelp("Get one: https://app.scrapecreators.com"));
+          const key = await resolvedDeps.promptLine("    Key [Enter to skip]: ");
+          if (key) parsed.scrapeCreatorsApiKey = key;
           resolvedDeps.writeStderr("\n");
         }
         if (!hasWebSearchChoice) {
@@ -468,6 +478,16 @@ export function parseCliArgs(argv: string[]): ParsedCliArgs {
       continue;
     }
 
+    if (token.startsWith("--scrapecreators-api-key=")) {
+      parsed.scrapeCreatorsApiKey = token.slice("--scrapecreators-api-key=".length);
+      continue;
+    }
+
+    if (token === "--scrapecreators-api-key") {
+      parsed.scrapeCreatorsApiKey = requireValue(args.shift(), "--scrapecreators-api-key");
+      continue;
+    }
+
     if (token.startsWith("--brave-api-key=")) {
       parsed.braveApiKey = token.slice("--brave-api-key=".length);
       continue;
@@ -653,6 +673,7 @@ export function buildServerEntry(options: {
 function buildSetupExtraEnv(parsed: ParsedCliArgs): Record<string, string | undefined> {
   return {
     OPENAI_API_KEY: parsed.openaiApiKey,
+    SCRAPECREATORS_API_KEY: parsed.scrapeCreatorsApiKey,
     BRAVE_API_KEY: parsed.braveApiKey,
     SERPAPI_KEY: parsed.serpapiKey,
     VIDLENS_WEB_SEARCH_PROVIDER: parsed.webSearchProvider,
@@ -1049,6 +1070,7 @@ async function renderDoctorReport(parsed: ParsedCliArgs, deps: CliDeps): Promise
   lines.push(`- Claude Desktop GEMINI_API_KEY / GOOGLE_API_KEY: ${configKeyState.gemini}`);
   lines.push(`- Claude Code GEMINI_API_KEY / GOOGLE_API_KEY: ${codeConfigKeyState.gemini}`);
   lines.push(`- Shell OPENAI_API_KEY: ${deps.env.OPENAI_API_KEY ? "set in current shell" : "not set in current shell"}`);
+  lines.push(`- Shell SCRAPECREATORS_API_KEY: ${deps.env.SCRAPECREATORS_API_KEY ? "set in current shell" : "not set in current shell"}`);
   lines.push(`- Shell BRAVE_API_KEY: ${deps.env.BRAVE_API_KEY ? "set in current shell" : "not set in current shell"}`);
   lines.push(`- Shell SERPAPI_KEY: ${deps.env.SERPAPI_KEY ? "set in current shell" : "not set in current shell"}`);
   lines.push("");
@@ -1401,6 +1423,8 @@ Common flags:
   --gemini-api-key <key>     Persist GEMINI_API_KEY into generated client config
   --google-api-key <key>     Persist GOOGLE_API_KEY into generated client config
   --openai-api-key <key>     Persist OPENAI_API_KEY for OpenAI speech-to-text fallback
+  --scrapecreators-api-key <key>
+                              Persist SCRAPECREATORS_API_KEY for social trend search
   --brave-api-key <key>      Persist BRAVE_API_KEY for structured web discovery
   --serpapi-key <key>        Persist SERPAPI_KEY for structured web discovery
   --web-search-provider <id> Persist VIDLENS_WEB_SEARCH_PROVIDER (auto, brave, serpapi, duckduckgo, none)
@@ -1469,11 +1493,12 @@ function describeUniversalSetupEnv(env: Record<string, string> | undefined): str
   const ok = "\x1b[32m✓\x1b[0m";
   const skip = "\x1b[90m-\x1b[0m";
   const openai = env?.OPENAI_API_KEY ? ok : skip;
+  const scrapeCreators = env?.SCRAPECREATORS_API_KEY ? ok : skip;
   const web = env?.BRAVE_API_KEY || env?.SERPAPI_KEY || env?.VIDLENS_WEB_SEARCH_PROVIDER ? ok : skip;
   const stt = env?.VIDLENS_STT_PROVIDER || env?.VIDLENS_STT_LANGUAGE_HINT || env?.VIDLENS_WHISPER_MODEL_PATH ? ok : skip;
   const cookies = env?.VIDLENS_COOKIES_FROM_BROWSER || env?.VIDLENS_YOUTUBE_COOKIES_FILE || env?.VIDLENS_X_COOKIES_FILE ||
     env?.VIDLENS_INSTAGRAM_COOKIES_FILE || env?.VIDLENS_TIKTOK_COOKIES_FILE ? ok : skip;
-  return `OPENAI_API_KEY ${openai}  web search ${web}  STT ${stt}  cookies ${cookies}`;
+  return `OPENAI_API_KEY ${openai}  ScrapeCreators ${scrapeCreators}  web search ${web}  STT ${stt}  cookies ${cookies}`;
 }
 
 function setupSection(title: string): string {
@@ -1518,6 +1543,7 @@ function redactSetupConfigForDisplay(text: string, parsed: ParsedCliArgs, env: N
     "GEMINI_API_KEY",
     "GOOGLE_API_KEY",
     "OPENAI_API_KEY",
+    "SCRAPECREATORS_API_KEY",
     "BRAVE_API_KEY",
     "SERPAPI_KEY",
     "VIDLENS_YOUTUBE_COOKIES_FILE",
@@ -1530,12 +1556,14 @@ function redactSetupConfigForDisplay(text: string, parsed: ParsedCliArgs, env: N
     parsed.geminiApiKey,
     parsed.googleApiKey,
     parsed.openaiApiKey,
+    parsed.scrapeCreatorsApiKey,
     parsed.braveApiKey,
     parsed.serpapiKey,
     env.YOUTUBE_API_KEY,
     env.GEMINI_API_KEY,
     env.GOOGLE_API_KEY,
     env.OPENAI_API_KEY,
+    env.SCRAPECREATORS_API_KEY,
     env.BRAVE_API_KEY,
     env.SERPAPI_KEY,
   ];
@@ -1673,7 +1701,7 @@ function redactEntryForDisplay(entry: McpServerEntry): McpServerEntry {
   const redactedEnv = entry.env
     ? Object.fromEntries(
         Object.entries(entry.env).map(([key, value]) => {
-          if (["YOUTUBE_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"].includes(key) && value) {
+          if (["YOUTUBE_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY", "SCRAPECREATORS_API_KEY", "BRAVE_API_KEY", "SERPAPI_KEY"].includes(key) && value) {
             return [key, "<set>"];
           }
           return [key, value];

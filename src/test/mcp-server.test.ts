@@ -35,6 +35,7 @@ test("public MCP surface uses intent-based tool names", () => {
     // Universal Video Sources
     "inspectVideoSource",
     "searchVideoSources",
+    "searchSocialTrends",
     "importVideoSources",
     "transcribeVideoSource",
     // Media / Asset tools
@@ -67,6 +68,10 @@ test("universal video tools are exposed through the plain MCP surface for Claude
   const searchTool = tools.find((t) => t.name === "searchVideoSources");
   assert.ok(searchTool, "searchVideoSources tool should exist");
   assert.deepEqual((searchTool.inputSchema as any).required, ["query"]);
+
+  const socialTool = tools.find((t) => t.name === "searchSocialTrends");
+  assert.ok(socialTool, "searchSocialTrends tool should exist");
+  assert.deepEqual((socialTool.inputSchema as any).required, ["query"]);
 
   const importTool = tools.find((t) => t.name === "importVideoSources");
   assert.ok(importTool, "importVideoSources tool should exist");

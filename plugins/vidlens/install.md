@@ -36,6 +36,7 @@ VidLens starts with a free core: public YouTube transcripts/search/metadata use 
 - `YOUTUBE_API_KEY`: better YouTube metadata, API search, and subscriber counts.
 - `GEMINI_API_KEY`: semantic search, visual search, AI frame descriptions, and Gemini STT fallback.
 - `OPENAI_API_KEY`: speech-to-text fallback for X/Instagram/TikTok, generic URLs, and local video files with no captions.
+- `SCRAPECREATORS_API_KEY`: direct social trend search across TikTok, Instagram, Threads, Pinterest, Reddit, and supported ScrapeCreators endpoints.
 - `BRAVE_API_KEY` or `SERPAPI_KEY`: structured web discovery for finding social/generic video URLs by query.
 - Browser cookies: logged-in, gated, age-limited, or rate-limited social videos.
 

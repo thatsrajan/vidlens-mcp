@@ -1,4 +1,4 @@
-export type SourceTier = "innertube" | "youtube_api" | "yt_dlp" | "page_extract" | "none";
+export type SourceTier = "innertube" | "youtube_api" | "yt_dlp" | "page_extract" | "scrapecreators" | "none";
 
 export interface Provenance {
   sourceTier: SourceTier;
@@ -1154,8 +1154,9 @@ export interface ExploreYouTubeOutput {
 
 export type MediaAssetKind = "video" | "audio" | "thumbnail" | "keyframe";
 export type VideoSourcePlatform = "youtube" | "x" | "instagram" | "tiktok" | "generic_url" | "local_file";
+export type SocialSearchPlatform = "tiktok" | "instagram" | "x" | "threads" | "pinterest" | "reddit";
 export type TranscriptCapabilityMode = "native" | "stt" | "unsupported";
-export type WebSearchProviderId = "brave" | "serpapi" | "duckduckgo_lite";
+export type WebSearchProviderId = "brave" | "serpapi" | "duckduckgo_lite" | "scrapecreators";
 export type SttProviderId = "whisper-cpp" | "gemini" | "openai";
 export type YtDlpFreshnessStatus = "unknown" | "fresh" | "stale" | "severely_stale";
 
@@ -1221,13 +1222,65 @@ export interface SearchVideoSourcesOutput {
   }>;
   searched: Array<{
     platform: VideoSourcePlatform | "local_assets";
-    mode: "native" | "web_fallback" | "local_index" | "unsupported";
+    mode: "native" | "web_fallback" | "local_index" | "scrapecreators" | "unsupported";
     providerId?: WebSearchProviderId;
     status: "ok" | "partial" | "skipped";
     detail: string;
   }>;
   limitations: string[];
   provenance: Provenance;
+}
+
+export interface SearchSocialTrendsInput extends TokenControls {
+  query: string;
+  platforms?: SocialSearchPlatform[];
+  maxResults?: number;
+  freshness?: "day" | "week" | "month" | "year" | "any";
+  sort?: "relevance" | "engagement" | "recent";
+  regionCode?: string;
+}
+
+export interface SearchSocialTrendsOutput {
+  query: string;
+  playlist: {
+    title: string;
+    itemCount: number;
+    importableUrls: string[];
+    platforms: SocialSearchPlatform[];
+  };
+  results: SocialTrendResult[];
+  searched: Array<{
+    platform: SocialSearchPlatform;
+    endpoint?: string;
+    status: "ok" | "partial" | "skipped";
+    detail: string;
+  }>;
+  limitations: string[];
+  provenance: Provenance;
+}
+
+export interface SocialTrendResult {
+  platform: SocialSearchPlatform;
+  sourceId: string;
+  url: string;
+  title?: string;
+  text?: string;
+  creator?: string;
+  creatorUrl?: string;
+  publishedAt?: string;
+  thumbnailUrl?: string;
+  durationSec?: number;
+  metrics?: {
+    views?: number;
+    likes?: number;
+    comments?: number;
+    shares?: number;
+    saves?: number;
+  };
+  score?: number;
+  importableVideoSource: boolean;
+  matchReason: string;
+  raw?: unknown;
 }
 
 export interface ImportVideoSourcesInput extends TokenControls {

@@ -482,6 +482,29 @@ export const tools: Tool[] = [
     },
   },
   {
+    name: "searchSocialTrends",
+    description: "Search social platforms through ScrapeCreators and return a playlist-like ranked list of posts/videos with engagement metrics and importable URLs where VidLens can ingest them. Supports TikTok, Instagram, Threads, Pinterest, Reddit, and handle-based X lookups when SCRAPECREATORS_API_KEY is configured. [~2-10s]",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Topic, keyword, hashtag, or @handle to search" },
+        platforms: {
+          type: "array",
+          items: { type: "string", enum: ["tiktok", "instagram", "x", "threads", "pinterest", "reddit"] },
+          description: "Optional platform filter. Defaults to all mapped ScrapeCreators social search platforms.",
+        },
+        maxResults: { type: "number", minimum: 1, maximum: 50 },
+        freshness: { type: "string", enum: ["day", "week", "month", "year", "any"], description: "Default: month" },
+        sort: { type: "string", enum: ["relevance", "engagement", "recent"], description: "Default: engagement" },
+        regionCode: { type: "string", description: "Two-letter region hint for TikTok, e.g. US, GB, AU" },
+        includeRaw: { type: "boolean", description: "Include raw ScrapeCreators items for debugging. Default false." },
+        dryRun: { type: "boolean" },
+      },
+      required: ["query"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "importVideoSources",
     description: "Import one or more video URLs or local files into the local VidLens media store, optionally building a visual index or transcript. Supports YouTube, X/Twitter, Instagram, TikTok, generic URLs via yt-dlp, and local video files via ffmpeg. [~30-180s]",
     inputSchema: {
@@ -812,7 +835,7 @@ const TIMING_TIER: Record<string, string> = {
   inspectChannel: "medium", listChannelCatalog: "medium", measureAudienceSentiment: "medium",
   buildVideoDossier: "medium", checkSystemHealth: "medium", researchTagsAndTitles: "medium",
   compareShortsVsLong: "medium", recommendUploadWindows: "medium", scoreHookPatterns: "medium",
-  searchVideoSources: "medium", findSourcedVideos: "medium", exploreSourcedVideos: "medium",
+  searchVideoSources: "medium", searchSocialTrends: "medium", findSourcedVideos: "medium", exploreSourcedVideos: "medium",
   importComments: "medium",
   analyzeVideoSet: "slow", analyzePlaylist: "slow", importPlaylist: "slow", importVideos: "slow",
   discoverNicheTrends: "slow", exploreNicheCompetitors: "slow", exploreYouTube: "slow",
@@ -1374,6 +1397,20 @@ async function executeTool(
           platforms: optionalStringArray(args, "platforms") as any,
           maxResults: optionalNumber(args, "maxResults"),
           includeLocalAssets: optionalBoolean(args, "includeLocalAssets"),
+        },
+        serviceOptions,
+      );
+
+    case "searchSocialTrends":
+      return service.searchSocialTrends(
+        {
+          query: readString(args, "query"),
+          platforms: optionalStringArray(args, "platforms") as any,
+          maxResults: optionalNumber(args, "maxResults"),
+          freshness: optionalString(args, "freshness") as any,
+          sort: optionalString(args, "sort") as any,
+          regionCode: optionalString(args, "regionCode"),
+          includeRaw: optionalBoolean(args, "includeRaw"),
         },
         serviceOptions,
       );

@@ -8,6 +8,7 @@ import { denoDownloadUrl } from "../lib/diagnostics/deno-installer.js";
 import { assessYtDlpFreshness } from "../lib/diagnostics/yt-dlp-freshness.js";
 import { allProviders } from "../lib/providers/registry.js";
 import { redactError, redactSecrets } from "../lib/redactor.js";
+import { ScrapeCreatorsClient } from "../lib/scrapecreators-client.js";
 import { offsetTranscript, stitchTranscripts } from "../lib/stt/chunker.js";
 import { OpenAiWhisperProvider } from "../lib/stt/openai-whisper-provider.js";
 import { selectSttProvider } from "../lib/stt/selector.js";
@@ -78,6 +79,64 @@ test("web search selector precedence and DuckDuckGo HTML parsing are determinist
   assert.equal(results[0]?.title, "A & B");
 });
 
+test("ScrapeCreators client normalizes TikTok and Instagram search results", async () => {
+  const calls: string[] = [];
+  const client = new ScrapeCreatorsClient("sc-test", (async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.includes("/v1/tiktok/search/top")) {
+      return new Response(JSON.stringify({
+        items: [{
+          id: "7620673421353012494",
+          desc: "Agent coding workflow",
+          create_time: "2026-03-24T04:25:45.000Z",
+          author: { unique_id: "sampledev", nickname: "Sample Dev" },
+          statistics: { play_count: 1000, digg_count: 100, comment_count: 10, share_count: 5 },
+          video: { duration: 42, cover: { url_list: ["https://example.com/cover.jpg"] } },
+          url: "https://www.tiktok.com/@sampledev/video/7620673421353012494",
+        }],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response(JSON.stringify({
+      reels: [{
+        shortcode: "DOq6eV6iIgD",
+        url: "https://www.instagram.com/reel/DOq6eV6iIgD/",
+        caption: "Agent workflow reel",
+        user: { username: "sampledev" },
+        like_count: 50,
+        comment_count: 4,
+      }],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch);
+
+  const result = await client.search({
+    query: "agent coding",
+    platforms: ["tiktok", "instagram"],
+    maxResults: 5,
+    freshness: "month",
+    sort: "engagement",
+  });
+
+  assert.equal(calls.length, 2);
+  assert.equal(result.results.length, 2);
+  assert.equal(result.results[0]?.platform, "tiktok");
+  assert.equal(result.results[0]?.importableVideoSource, true);
+  assert.equal(result.results[1]?.url, "https://www.instagram.com/reel/DOq6eV6iIgD/");
+});
+
+test("searchSocialTrends dry-run returns playlist-like social results", async () => {
+  const service = new YouTubeService({ scrapeCreatorsApiKey: "sc-test" });
+  const output = await service.searchSocialTrends({
+    query: "agent coding",
+    platforms: ["tiktok", "instagram", "reddit"],
+    maxResults: 3,
+  }, { dryRun: true });
+  assert.equal(output.results.length, 3);
+  assert.equal(output.playlist.itemCount, 3);
+  assert.ok(output.playlist.importableUrls.some((url) => url.includes("tiktok.com")));
+  assert.equal(output.provenance.sourceTier, "scrapecreators");
+});
+
 test("STT selector, OpenAI provider, transcript stitching, and progress work without live network", async () => {
   assert.equal(selectSttProvider({ OPENAI_API_KEY: "key" }).providerId, "openai");
   assert.equal(selectSttProvider({ VIDLENS_STT_PROVIDER: "none", OPENAI_API_KEY: "key" }).providerId, "none");
@@ -135,7 +194,7 @@ test("Codex setup TOML preserves unrelated blocks and writes MCP plus plugin reg
   const result = upsertCodexConfig({
     configPath: "/tmp/config.toml",
     existingText: "[profile]\nmodel = \"gpt-5\"\n",
-    entry: { command: "npx", args: ["-y", "vidlens-mcp", "serve"], env: { VIDLENS_DATA_DIR: "/tmp/vidlens" } },
+    entry: { command: "npx", args: ["-y", "vidlens-mcp", "serve"], env: { VIDLENS_DATA_DIR: "/tmp/vidlens", SCRAPECREATORS_API_KEY: "sc-test" } },
     pluginPath: "/repo/plugins/vidlens",
     printOnly: true,
   });
@@ -144,6 +203,7 @@ test("Codex setup TOML preserves unrelated blocks and writes MCP plus plugin reg
   assert.match(result.configText, /\[marketplaces\.vidlens\]/);
   assert.match(result.configText, /\[plugins\."vidlens@vidlens"\]/);
   assert.match(result.configText, /VIDLENS_DATA_DIR = "\/tmp\/vidlens"/);
+  assert.match(result.configText, /SCRAPECREATORS_API_KEY = "sc-test"/);
 });
 
 test("source-aware KB search does not fabricate YouTube URLs for non-YouTube transcripts", async () => {
