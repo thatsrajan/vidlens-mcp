@@ -12,6 +12,7 @@ import {
   parseCliArgs,
   runCli,
 } from "../lib/cli-runtime.js";
+import { mergeTomlTables } from "../lib/toml-writer.js";
 import type { YouTubeService } from "../lib/youtube-service.js";
 
 type JsonObject = Record<string, unknown>;
@@ -244,6 +245,72 @@ describe("buildServerEntry", () => {
     assert.equal("YOUTUBE_API_KEY" in (entry.env ?? {}), false);
     assert.equal("GEMINI_API_KEY" in (entry.env ?? {}), false);
     assert.equal("GOOGLE_API_KEY" in (entry.env ?? {}), false);
+  });
+
+  it("preserves a saved custom VIDLENS_DATA_DIR when no flag is given (WS2-2)", () => {
+    const entry = buildServerEntry({
+      nodePath: "/usr/local/bin/node",
+      cliPath: "/opt/vidlens/dist/cli.js",
+      dataDir: "/platform/default", // fallback (process env / platform default)
+      existingEntry: { env: { VIDLENS_DATA_DIR: "/custom/library" } },
+    });
+
+    assert.equal(entry.env!.VIDLENS_DATA_DIR, "/custom/library");
+  });
+
+  it("explicit --data-dir flag overrides a saved custom value", () => {
+    const entry = buildServerEntry({
+      nodePath: "/usr/local/bin/node",
+      cliPath: "/opt/vidlens/dist/cli.js",
+      dataDir: "/platform/default",
+      explicitDataDir: "/flag/dir",
+      existingEntry: { env: { VIDLENS_DATA_DIR: "/custom/library" } },
+    });
+
+    assert.equal(entry.env!.VIDLENS_DATA_DIR, "/flag/dir");
+  });
+
+  it("falls back to the fallback data dir when nothing is saved and no flag is given", () => {
+    const entry = buildServerEntry({
+      nodePath: "/usr/local/bin/node",
+      cliPath: "/opt/vidlens/dist/cli.js",
+      dataDir: "/platform/default",
+    });
+
+    assert.equal(entry.env!.VIDLENS_DATA_DIR, "/platform/default");
+  });
+});
+
+describe("mergeTomlTables header matching (WS7-3)", () => {
+  it("replaces a table whose header carries a trailing comment", () => {
+    const existing = "[mcp_servers.vidlens-mcp] # vidlens\ncommand = \"old\"\n";
+    const merged = mergeTomlTables(existing, {
+      "mcp_servers.vidlens-mcp": { command: "new" },
+    });
+    // Old command line must be gone (table replaced, not duplicated).
+    assert.equal(merged.includes('command = "old"'), false);
+    assert.equal(merged.includes('command = "new"'), true);
+    // Only one occurrence of the header.
+    assert.equal(merged.split("[mcp_servers.vidlens-mcp]").length - 1, 1);
+  });
+
+  it("replaces a table whose header has whitespace inside the brackets", () => {
+    const existing = "[ mcp_servers.vidlens-mcp ]\ncommand = \"old\"\n";
+    const merged = mergeTomlTables(existing, {
+      "mcp_servers.vidlens-mcp": { command: "new" },
+    });
+    assert.equal(merged.includes('command = "old"'), false);
+    assert.equal(merged.includes('command = "new"'), true);
+  });
+
+  it("leaves unrelated tables untouched", () => {
+    const existing = "[other]\nkeep = true\n\n[mcp_servers.vidlens-mcp]\ncommand = \"old\"\n";
+    const merged = mergeTomlTables(existing, {
+      "mcp_servers.vidlens-mcp": { command: "new" },
+    });
+    assert.equal(merged.includes("keep = true"), true);
+    assert.equal(merged.includes('command = "new"'), true);
+    assert.equal(merged.includes('command = "old"'), false);
   });
 });
 
@@ -1191,5 +1258,122 @@ VIDLENS_X_COOKIES_FILE = "/secret/x-cookies.txt"
     assert.ok(!output.includes("existing-openai-secret"));
     assert.ok(!output.includes("existing-brave-secret"));
     assert.ok(!output.includes("/secret/x-cookies.txt"));
+  });
+});
+
+describe("setup consent and client-support gates", () => {
+  it("re-running setup without --data-dir preserves a saved custom VIDLENS_DATA_DIR (WS2-2)", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "vidlens-mcp-datadir-preserve-"));
+    const configPath = join(configDir, "claude.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        mcpServers: {
+          "vidlens-mcp": {
+            command: "node",
+            args: ["/old/cli.js", "serve"],
+            env: { VIDLENS_DATA_DIR: "/custom/library", CUSTOM: "keep" },
+          },
+        },
+      }, null, 2),
+    );
+
+    await runCli(["setup", "--client=claude_desktop"], {
+      startServer: async () => undefined,
+      createService: () => ({}) as unknown as YouTubeService,
+      packageMeta: { name: "vidlens-mcp", version: "1.0.0" },
+      detectClients: () => [
+        {
+          clientId: "claude_desktop" as const,
+          name: "Claude Desktop",
+          detected: true,
+          supportLevel: "supported" as const,
+          installSurface: "config_file" as const,
+          configPath,
+        },
+      ],
+      writeStdout: () => undefined,
+      writeStderr: () => undefined,
+      env: {},
+      platform: "darwin",
+      homeDir: configDir,
+      nodePath: "/usr/local/bin/node",
+      cliPath: "/repo/dist/cli.js",
+      now: () => new Date("2026-07-08T00:00:00.000Z"),
+      isNpx: false,
+      interactive: false,
+      promptLine: async (question) => {
+        throw new Error(`unexpected prompt in non-interactive setup: ${question}`);
+      },
+    });
+
+    const written = JSON.parse(readFileSync(configPath, "utf8")) as {
+      mcpServers: Record<string, { env?: Record<string, string> }>;
+    };
+    const entry = written.mcpServers["vidlens-mcp"];
+    assert.equal(entry?.env?.VIDLENS_DATA_DIR, "/custom/library", "custom data dir must survive re-run");
+    assert.equal(entry?.env?.CUSTOM, "keep", "unrelated saved env must be preserved");
+  });
+
+  it("non-interactive setup skips install prompts and prints a --yes hint (WS5-5)", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "vidlens-mcp-noninteractive-"));
+    const stderr: string[] = [];
+    const promptCalls: string[] = [];
+
+    await runCli(["setup", "--client=claude_desktop", "--print-only"], {
+      startServer: async () => undefined,
+      createService: () => ({}) as unknown as YouTubeService,
+      packageMeta: { name: "vidlens-mcp", version: "1.0.0" },
+      detectClients: () => [
+        {
+          clientId: "claude_desktop" as const,
+          name: "Claude Desktop",
+          detected: true,
+          supportLevel: "supported" as const,
+          installSurface: "config_file" as const,
+          configPath: join(configDir, "claude.json"),
+        },
+      ],
+      writeStdout: () => undefined,
+      writeStderr: (text) => { stderr.push(text); },
+      env: {}, // no PATH -> yt-dlp not found -> consent gate reached
+      platform: "darwin",
+      homeDir: configDir, // empty temp home -> no managed yt-dlp binary
+      nodePath: "/usr/local/bin/node",
+      cliPath: "/repo/dist/cli.js",
+      now: () => new Date("2026-07-08T00:00:00.000Z"),
+      isNpx: false,
+      interactive: false,
+      promptLine: async (question) => { promptCalls.push(question); return "y"; },
+    });
+
+    const out = stderr.join("");
+    assert.ok(out.includes("yt-dlp not found"), "yt-dlp should be reported missing");
+    assert.ok(out.includes("non-interactive"), "should print the non-interactive skip hint");
+    assert.ok(out.includes("--yes"), "hint should mention the --yes flag");
+    assert.ok(
+      !promptCalls.some((q) => q.includes("Download it now")),
+      "must not prompt for yt-dlp download in non-interactive mode",
+    );
+  });
+
+  it("setup --client=cursor exits non-zero with a not-yet-supported message (WS5-6)", async () => {
+    await assert.rejects(
+      runCli(["setup", "--client=cursor", "--print-only"], {
+        startServer: async () => undefined,
+        createService: () => ({}) as unknown as YouTubeService,
+        packageMeta: { name: "vidlens-mcp", version: "1.0.0" },
+        detectClients: () => [],
+        writeStdout: () => undefined,
+        writeStderr: () => undefined,
+        env: {},
+        platform: "darwin",
+        homeDir: "/Users/test",
+        nodePath: "/usr/local/bin/node",
+        cliPath: "/repo/dist/cli.js",
+        now: () => new Date("2026-07-08T00:00:00.000Z"),
+      }),
+      /does not yet support[\s\S]*cursor/,
+    );
   });
 });

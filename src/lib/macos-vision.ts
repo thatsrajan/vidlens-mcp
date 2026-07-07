@@ -1,5 +1,5 @@
-import { existsSync, unlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { execa } from "execa";
@@ -11,6 +11,12 @@ export interface NativeFrameAnalysis {
   ocrText?: string;
   ocrConfidence?: number;
   featureVector?: number[];
+}
+
+export interface FrameAnalysisBatch {
+  analyses: NativeFrameAnalysis[];
+  /** Frames Apple Vision could not analyze; the batch continues past them. */
+  failures: Array<{ framePath: string; error: string }>;
 }
 
 interface SwiftAnalysisPayload {
@@ -32,37 +38,52 @@ const SCRIPT_VERSION = "2026-03-15-v1";
 export class MacOSVisionAnalyzer {
   constructor(private readonly swiftBinary = "swift") {}
 
-  async analyzeFrames(framePaths: string[]): Promise<NativeFrameAnalysis[]> {
+  /**
+   * Analyze frames with Apple Vision. One unreadable frame no longer aborts the whole batch —
+   * per-frame errors are captured in `failures` and the remaining frames are returned.
+   */
+  async analyzeFramesBatch(framePaths: string[]): Promise<FrameAnalysisBatch> {
     const uniquePaths = Array.from(new Set(framePaths.filter((path) => typeof path === "string" && path.trim().length > 0)));
-    if (uniquePaths.length === 0) return [];
+    if (uniquePaths.length === 0) return { analyses: [], failures: [] };
 
-    const missing = uniquePaths.filter((path) => !existsSync(path));
-    if (missing.length > 0) {
-      throw new Error(`Frame file does not exist: ${missing[0]}`);
+    const failures: Array<{ framePath: string; error: string }> = [];
+    const present: string[] = [];
+    for (const path of uniquePaths) {
+      if (existsSync(path)) {
+        present.push(path);
+      } else {
+        failures.push({ framePath: path, error: "Frame file does not exist" });
+      }
+    }
+    if (present.length === 0) {
+      return { analyses: [], failures };
     }
 
     const scriptPath = ensureSwiftScript();
     const payloadPath = join(tmpdir(), `vidlens-macos-vision-${randomUUID()}.json`);
-    writeFileSync(payloadPath, JSON.stringify({ images: uniquePaths }), "utf8");
+    writeFileSync(payloadPath, JSON.stringify({ images: present }), "utf8");
 
     try {
       const { stdout } = await execa(this.swiftBinary, [scriptPath, payloadPath], {
-        timeout: Math.max(60_000, uniquePaths.length * 20_000),
+        timeout: Math.max(60_000, present.length * 20_000),
       });
       const parsed = JSON.parse(stdout) as SwiftResponsePayload;
-      return (parsed.results ?? []).map((item) => {
+      const analyses: NativeFrameAnalysis[] = [];
+      for (const item of parsed.results ?? []) {
         if (item.error) {
-          throw new Error(`Apple Vision failed for ${item.path}: ${item.error}`);
+          failures.push({ framePath: item.path, error: item.error });
+          continue;
         }
-        return {
+        analyses.push({
           framePath: item.path,
           width: item.width,
           height: item.height,
           ocrText: normalizeOptionalText(item.ocrText),
           ocrConfidence: item.ocrConfidence,
           featureVector: normalizeVector(item.featureVector),
-        } satisfies NativeFrameAnalysis;
-      });
+        });
+      }
+      return { analyses, failures };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(`Apple Vision analysis failed. Ensure macOS Swift + Vision framework are available. ${message}`);
@@ -73,6 +94,12 @@ export class MacOSVisionAnalyzer {
         // best-effort temp cleanup
       }
     }
+  }
+
+  /** Backwards-compatible wrapper returning only the successful analyses. */
+  async analyzeFrames(framePaths: string[]): Promise<NativeFrameAnalysis[]> {
+    const { analyses } = await this.analyzeFramesBatch(framePaths);
+    return analyses;
   }
 
   async probe(): Promise<{ backend: string; swiftVersion: string }> {
@@ -90,10 +117,14 @@ export class MacOSVisionAnalyzer {
 }
 
 function ensureSwiftScript(): string {
-  const scriptPath = join(tmpdir(), `vidlens-macos-vision-${SCRIPT_VERSION}.swift`);
-  if (!existsSync(scriptPath)) {
-    writeFileSync(scriptPath, SWIFT_SCRIPT, "utf8");
-  }
+  // Keep the script under a private per-user directory (not the shared, world-writable TMPDIR)
+  // and always (re)write our own content before executing so a pre-planted file can never run.
+  const dir = process.env.VIDLENS_DATA_DIR
+    ? join(process.env.VIDLENS_DATA_DIR, "bin")
+    : join(homedir(), "Library", "Application Support", "vidlens-mcp", "bin");
+  mkdirSync(dir, { recursive: true });
+  const scriptPath = join(dir, `vidlens-macos-vision-${SCRIPT_VERSION}.swift`);
+  writeFileSync(scriptPath, SWIFT_SCRIPT, "utf8");
   return scriptPath;
 }
 

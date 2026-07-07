@@ -1,5 +1,9 @@
 import { buildChannelUrl, buildPlaylistUrl, buildVideoUrl, type ChannelRef } from "./id-parsing.js";
+import { fetchWithTimeout } from "./fetch-timeout.js";
 import type { ChannelRecord, CommentRecord, SearchItem, VideoRecord } from "./types.js";
+
+/** YouTube Data API caps most list endpoints at 50 items per request. */
+const API_PAGE_SIZE = 50;
 
 interface ApiConfig {
   apiKey?: string;
@@ -45,7 +49,7 @@ export class YouTubeApiClient {
       }
     }
 
-    const response = await fetch(url);
+    const response = await fetchWithTimeout(url);
     if (!response.ok) {
       const body = await response.text();
       throw new Error(`YouTube API request failed (${response.status}): ${body}`);
@@ -152,14 +156,21 @@ export class YouTubeApiClient {
       }>;
     };
 
-    const response = await this.request<VideosResponse>("videos", {
-      part: "snippet,contentDetails,statistics",
-      id: videoIds.join(","),
-      maxResults: videoIds.length,
-    });
+    // The videos endpoint accepts at most 50 ids per request; batch to stay
+    // under the cap now that callers can pass more (paginated playlists).
+    const rawVideos: NonNullable<VideosResponse["items"]> = [];
+    for (let offset = 0; offset < videoIds.length; offset += API_PAGE_SIZE) {
+      const batch = videoIds.slice(offset, offset + API_PAGE_SIZE);
+      const response = await this.request<VideosResponse>("videos", {
+        part: "snippet,contentDetails,statistics",
+        id: batch.join(","),
+        maxResults: batch.length,
+      });
+      rawVideos.push(...(response.items ?? []));
+    }
 
     const items: VideoRecord[] = [];
-    for (const video of response.items ?? []) {
+    for (const video of rawVideos) {
       if (!video.id) {
         continue;
       }
@@ -194,6 +205,7 @@ export class YouTubeApiClient {
     maxRepliesPerThread = 3,
   ): Promise<CommentRecord[]> {
     type CommentsResponse = {
+      nextPageToken?: string;
       items?: Array<{
         id?: string;
         snippet?: {
@@ -221,42 +233,57 @@ export class YouTubeApiClient {
       }>;
     };
 
-    const response = await this.request<CommentsResponse>("commentThreads", {
-      part: includeReplies ? "snippet,replies" : "snippet",
-      videoId,
-      maxResults: Math.min(maxResults, 100),
-      order,
-      textFormat: "plainText",
-    });
-
     const comments: CommentRecord[] = [];
-    for (const item of response.items ?? []) {
-      const snippet = item.snippet?.topLevelComment?.snippet;
-      if (!snippet?.textDisplay) {
-        continue;
-      }
-      comments.push({
-        commentId: item.id,
-        author: snippet.authorDisplayName ?? "Unknown author",
-        text: snippet.textDisplay,
-        likeCount: snippet.likeCount,
-        publishedAt: snippet.publishedAt,
-        replies: includeReplies
-          ? (item.replies?.comments ?? [])
-              .slice(0, maxRepliesPerThread)
-              .map((reply) => ({
-                commentId: reply.id,
-                author: reply.snippet?.authorDisplayName ?? "Unknown author",
-                text: reply.snippet?.textDisplay ?? "",
-                likeCount: reply.snippet?.likeCount,
-                publishedAt: reply.snippet?.publishedAt,
-              }))
-              .filter((reply) => reply.text)
-          : undefined,
+    let pageToken: string | undefined;
+
+    // commentThreads caps each request at 100 items; page until we reach the
+    // requested count (the service advertises up to 200) or run out of pages.
+    while (comments.length < maxResults) {
+      const response = await this.request<CommentsResponse>("commentThreads", {
+        part: includeReplies ? "snippet,replies" : "snippet",
+        videoId,
+        maxResults: Math.min(maxResults - comments.length, 100),
+        order,
+        textFormat: "plainText",
+        pageToken,
       });
+
+      for (const item of response.items ?? []) {
+        const snippet = item.snippet?.topLevelComment?.snippet;
+        if (!snippet?.textDisplay) {
+          continue;
+        }
+        comments.push({
+          commentId: item.id,
+          author: snippet.authorDisplayName ?? "Unknown author",
+          text: snippet.textDisplay,
+          likeCount: snippet.likeCount,
+          publishedAt: snippet.publishedAt,
+          replies: includeReplies
+            ? (item.replies?.comments ?? [])
+                .slice(0, maxRepliesPerThread)
+                .map((reply) => ({
+                  commentId: reply.id,
+                  author: reply.snippet?.authorDisplayName ?? "Unknown author",
+                  text: reply.snippet?.textDisplay ?? "",
+                  likeCount: reply.snippet?.likeCount,
+                  publishedAt: reply.snippet?.publishedAt,
+                }))
+                .filter((reply) => reply.text)
+            : undefined,
+        });
+        if (comments.length >= maxResults) {
+          break;
+        }
+      }
+
+      pageToken = response.nextPageToken;
+      if (!pageToken || (response.items ?? []).length === 0) {
+        break;
+      }
     }
 
-    return comments;
+    return comments.slice(0, maxResults);
   }
 
   async getChannel(ref: ChannelRef): Promise<ChannelRecord> {
@@ -349,6 +376,7 @@ export class YouTubeApiClient {
 
   async getPlaylistVideos(playlistId: string, maxResults: number): Promise<VideoRecord[]> {
     type PlaylistItemsResponse = {
+      nextPageToken?: string;
       items?: Array<{
         snippet?: {
           title?: string;
@@ -359,15 +387,34 @@ export class YouTubeApiClient {
       }>;
     };
 
-    const response = await this.request<PlaylistItemsResponse>("playlistItems", {
-      part: "snippet",
-      playlistId,
-      maxResults: Math.min(maxResults, 50),
-    });
+    const ids: string[] = [];
+    let pageToken: string | undefined;
 
-    const ids = (response.items ?? [])
-      .map((item) => item.snippet?.resourceId?.videoId)
-      .filter((id): id is string => Boolean(id));
+    // playlistItems caps each request at 50; page until we reach the requested
+    // count (the service advertises up to 200) or run out of pages.
+    while (ids.length < maxResults) {
+      const response = await this.request<PlaylistItemsResponse>("playlistItems", {
+        part: "snippet",
+        playlistId,
+        maxResults: Math.min(maxResults - ids.length, API_PAGE_SIZE),
+        pageToken,
+      });
+
+      for (const item of response.items ?? []) {
+        const videoId = item.snippet?.resourceId?.videoId;
+        if (videoId) {
+          ids.push(videoId);
+        }
+        if (ids.length >= maxResults) {
+          break;
+        }
+      }
+
+      pageToken = response.nextPageToken;
+      if (!pageToken || (response.items ?? []).length === 0) {
+        break;
+      }
+    }
 
     const details = await this.getVideosByIds(ids);
     const detailMap = new Map(details.map((item) => [item.videoId, item]));

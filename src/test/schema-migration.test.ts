@@ -351,3 +351,27 @@ test("KNOWLEDGE_BASE_MIGRATIONS v2 is idempotent — safe if column already exis
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// 13. KNOWLEDGE_BASE_MIGRATIONS version 2 no-ops when transcript_chunks is absent
+//     (the comment store may open the shared DB before the transcript store
+//     has created the table).
+// ---------------------------------------------------------------------------
+test("KNOWLEDGE_BASE_MIGRATIONS v2 is safe when transcript_chunks does not exist", () => {
+  const { db, dir } = tmpDb();
+  try {
+    const result = runMigrations(db, "knowledge-base.sqlite", KNOWLEDGE_BASE_MIGRATIONS);
+
+    assert.equal(result.currentVersion, 2);
+    assert.equal(result.errors.length, 0);
+
+    // The migration must not have conjured the table into existence.
+    const table = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'transcript_chunks'")
+      .get();
+    assert.equal(table, undefined);
+  } finally {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

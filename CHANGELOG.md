@@ -6,6 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-07-08
+
+Full-codebase review and repair release: ~50 findings fixed across every subsystem by a coordinated multi-agent pass, plus a new cross-session memory tool. Test suite grew from ~126 to 402 cases.
+
+### Added
+- `recallWorkspace` tool (47th tool): instant digest of everything VidLens already has stored — collections, comment collections, media assets, visual indexes — so agents check existing material before re-importing. Import/download tool descriptions now state that results persist across sessions.
+- `vidlens-workflows` agent skill shipped in both Claude (`plugins/vidlens/skills/`) and Codex (`.agents/skills/`) layouts: check-first protocol, read-vs-import guidance, fallback-tier expectations, and the import-back rule for manual downloads.
+- README section on persistent memory across sessions and the shared-data-dir pattern (plus a warning against putting `VIDLENS_DATA_DIR` inside Dropbox/iCloud).
+- Schema-driven argument validation at the MCP dispatch boundary: enum membership, numeric bounds, required params — invalid input now returns `INVALID_INPUT` with allowed values instead of opaque internal errors.
+- SSRF guard (`url-guard`): channel-page fetches and generic-URL downloads reject private/link-local/loopback addresses (escape hatch: `VIDLENS_ALLOW_PRIVATE_URLS=1`).
+- yt-dlp installer now verifies the release SHA-256 checksum and installs atomically (temp file + rename); Deno installer gains atomic install and a size cap.
+- `setup --yes` flag; non-interactive setup no longer auto-installs software silently (defaults to no).
+
+### Fixed
+- **whisper.cpp STT provider was completely non-functional** — now reads the JSON output file (not stdout), parses SRT-style comma timestamps, and converts audio to 16 kHz WAV before transcription. Verified end-to-end against a real `whisper-cli` binary.
+- **yt-dlp comment fallback could never return comments** (missing `--write-comments`); comment tools now work without a YouTube API key.
+- **Incremental imports no longer destroy Gemini embeddings**: the collection's stored embedding algorithm is authoritative; existing vectors are never silently downgraded to local, and reindexing only embeds new chunks instead of re-billing the whole collection.
+- **Re-running `setup` no longer clobbers a custom `VIDLENS_DATA_DIR`** saved in client configs (precedence: flag > saved config > env > default) — protects existing libraries for Claude Desktop, Claude Code, and Codex.
+- Schema-migration framework is now actually wired into the knowledge-base, comment, and media stores (was dead code; production DBs never migrated).
+- Rate limiter no longer over-admits under concurrency (re-checks after waiting, accumulates fractional refills).
+- `checkImportReadiness` and transcript imports now use the same InnerTube-first tier chain as reads — dossiers no longer omit transcripts that `readTranscript` could fetch, and imports work without yt-dlp.
+- Background enrichment from `exploreYouTube` is tracked per job: real done/failed status, no duplicate downloads, errors no longer silently swallowed.
+- YouTube API pagination: comment and playlist requests above one page (100/50) now paginate to the advertised limits instead of silently truncating.
+- Visual search: frame sampling now spreads across the full video duration, fixing permanent re-indexing of videos longer than ~8 minutes on every search; one bad frame no longer aborts the whole indexing batch; non-macOS platforms degrade to Gemini descriptions instead of failing outright.
+- Hostname matching uses dot boundaries (`notyoutube.com` no longer routes as YouTube); URL canonicalization preserves query strings for generic URLs.
+- STT providers gained retry with backoff and request timeouts; chunker respects provider size caps (bitrate-derived chunk sizing) and cleans up temp chunk directories.
+- All raw `fetch` calls now carry timeouts (30s default, 120s downloads).
+- Import failure messages are routed through the secret redactor (yt-dlp command lines with cookie paths no longer leak into tool output).
+- Media deletes remove manifest rows before files (no more dangling manifest entries on partial failure); asset dedupe distinguishes `best_video`/`worst_video`.
+- MCP server reports its real version from package.json (was hardcoded to a stale version); banner tool counts derive from one constant, enforced by a test.
+- CLI prints clean one-line messages for usage errors instead of stack traces; `setup --client cursor|vscode` errors clearly instead of silently doing nothing; TOML merge handles commented/spaced table headers without duplicating Codex config tables.
+- Invalid `timezone` input to `recommendUploadWindows` returns `INVALID_INPUT` instead of an internal error; `expandPlaylist`'s `includeVideoMeta: false` actually omits metadata; non-YouTube imports no longer fail when `collectionId` is omitted.
+
+### Changed
+- ~600 lines of duplicated math/NLP helpers unified into `text-math.ts` (shared by transcript and comment knowledge bases); comment-KB video filtering pushed into SQL.
+- `visual-report` opens the browser via argv (no shell) and drops non-http(s) link schemes from reports.
+
 ## [1.3.1] - 2026-06-19
 
 ### Added

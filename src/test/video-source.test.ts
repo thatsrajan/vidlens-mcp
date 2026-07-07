@@ -38,6 +38,30 @@ test("resolveVideoSource parses TikTok video URLs", () => {
   assert.equal(source.assetKey, "tiktok_7350000000000000000");
 });
 
+test("resolveVideoSource routes look-alike hostnames to generic_url", () => {
+  assert.equal(resolveVideoSource("https://notyoutube.com/watch?v=abc").platform, "generic_url");
+  assert.equal(resolveVideoSource("https://fake-tiktok.com/@x/video/123").platform, "generic_url");
+  assert.equal(resolveVideoSource("https://myinstagram.com/reel/abc").platform, "generic_url");
+  assert.equal(resolveVideoSource("https://nottwitter.com/x/status/1").platform, "generic_url");
+});
+
+test("resolveVideoSource still matches real platform subdomains", () => {
+  assert.equal(resolveVideoSource("https://m.youtube.com/watch?v=dQw4w9WgXcQ").platform, "youtube");
+  assert.equal(resolveVideoSource("https://vm.tiktok.com/ZMabc123/").platform, "tiktok");
+});
+
+test("resolveVideoSource preserves query string for generic URLs", () => {
+  const source = resolveVideoSource("https://videos.example.com/player?video=123&utm_source=x");
+  assert.equal(source.platform, "generic_url");
+  // Query identifies the video for generic URLs, so it must survive canonicalization.
+  assert.ok(source.canonicalUrl.includes("video=123"), source.canonicalUrl);
+});
+
+test("resolveVideoSource strips query for known platforms", () => {
+  const source = resolveVideoSource("https://www.tiktok.com/@creator/video/7350000000000000000?lang=en");
+  assert.ok(!source.canonicalUrl.includes("lang=en"), source.canonicalUrl);
+});
+
 test("resolveVideoSource accepts local video files", () => {
   const dir = join(tmpdir(), `vidlens-source-${randomUUID()}`);
   mkdirSync(dir, { recursive: true });

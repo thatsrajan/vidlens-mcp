@@ -17,6 +17,7 @@ import {
   type KnownClientId,
 } from "./install-diagnostics.js";
 import { mergeTomlTables, type TomlValue } from "./toml-writer.js";
+import { renderBanner } from "./banner.js";
 import type { YouTubeService } from "./youtube-service.js";
 
 type JsonObject = Record<string, unknown>;
@@ -56,6 +57,7 @@ export interface ParsedCliArgs {
   noLive: boolean;
   printOnly: boolean;
   advancedSetup?: boolean;
+  assumeYes?: boolean;
   platform?: string;
   dataDir?: string;
   youtubeApiKey?: string;
@@ -91,16 +93,23 @@ export interface CliDeps {
   cliPath: string;
   now: () => Date;
   isNpx: boolean;
+  /** Whether stdin is an interactive TTY. Non-interactive runs never auto-consent. */
+  interactive: boolean;
   promptLine: (question: string) => Promise<string>;
   runCommand: (command: string, args: string[], options?: { env?: NodeJS.ProcessEnv; timeoutMs?: number }) => CommandResult;
 }
 
-class CliUserError extends Error {
+export class CliUserError extends Error {
+  /** Marker so callers across module boundaries can print `.message` only. */
+  readonly userFacing = true;
   constructor(message: string) {
     super(message);
     this.name = "CliUserError";
   }
 }
+
+/** Clients that `setup` can actually configure today. */
+const SUPPORTED_SETUP_CLIENTS: KnownClientId[] = ["claude_desktop", "claude_code", "codex"];
 
 export async function runCli(args: string[], deps: Partial<CliDeps> = {}): Promise<number> {
   const resolvedDeps = createCliDeps(deps);
@@ -121,12 +130,16 @@ export async function runCli(args: string[], deps: Partial<CliDeps> = {}): Promi
       resolvedDeps.writeStdout(await renderUpdateDepsReport(parsed, resolvedDeps));
       return 0;
     case "setup": {
-      const ver = resolvedDeps.packageMeta.version;
-      resolvedDeps.writeStderr(`
-  \x1b[31m▶\x1b[0m \x1b[1mVidLens MCP\x1b[0m v${ver}
-    Video intelligence layer for AI agents
-    44 tools · zero config
-`);
+      const unsupportedClients = dedupeClientIds(
+        parsed.clientIds.filter((id) => !SUPPORTED_SETUP_CLIENTS.includes(id)),
+      );
+      if (unsupportedClients.length > 0) {
+        throw new CliUserError(
+          `setup does not yet support: ${unsupportedClients.join(", ")}. ` +
+            `Supported clients: ${SUPPORTED_SETUP_CLIENTS.join(", ")}.`,
+        );
+      }
+      resolvedDeps.writeStderr(renderBanner({ version: resolvedDeps.packageMeta.version }));
       const detectedClients = resolvedDeps.detectClients();
       const desktopDetected = detectedClients.some(c => c.clientId === "claude_desktop" && c.detected);
       const codeDetected = detectedClients.some(c => c.clientId === "claude_code" && c.detected);
@@ -155,8 +168,7 @@ export async function runCli(args: string[], deps: Partial<CliDeps> = {}): Promi
         resolvedDeps.writeStderr("    videos — transcripts, search results, metadata — without needing\n");
         resolvedDeps.writeStderr("    any API keys. Without it, most tools won't work.\n");
         resolvedDeps.writeStderr("    \x1b[2mhttps://github.com/yt-dlp/yt-dlp\x1b[0m\n\n");
-        const answer = await resolvedDeps.promptLine("    Download it now? (Y/n): ");
-        if (!answer || answer.trim().toLowerCase() !== "n") {
+        if (await confirmInstallConsent("    Download it now? (Y/n): ", parsed, resolvedDeps)) {
           resolvedDeps.writeStderr("    Downloading yt-dlp...\n");
           try {
             const binPath = await downloadYtDlp(dataDir, resolvedDeps.platform, process.arch);
@@ -335,8 +347,7 @@ export async function runCli(args: string[], deps: Partial<CliDeps> = {}): Promi
           resolvedDeps.writeStderr(`  \x1b[33m⚡ Startup speed\x1b[0m\n`);
           resolvedDeps.writeStderr(`    npx checks the npm registry on every Claude Desktop restart (1-30s delay).\n`);
           resolvedDeps.writeStderr(`    A global install eliminates this — server starts in <0.5s.\n`);
-          const answer = await resolvedDeps.promptLine("    Install globally now? (Y/n): ");
-          if (!answer || answer.trim().toLowerCase() !== "n") {
+          if (await confirmInstallConsent("    Install globally now? (Y/n): ", parsed, resolvedDeps)) {
             resolvedDeps.writeStderr(`    Installing ${pkgName} globally...\n`);
             try {
               const { execSync } = await import("node:child_process");
@@ -415,6 +426,11 @@ export function parseCliArgs(argv: string[]): ParsedCliArgs {
 
     if (token === "--advanced" || token === "--advanced-setup" || token === "--configure-optional") {
       parsed.advancedSetup = true;
+      continue;
+    }
+
+    if (token === "--yes" || token === "-y") {
+      parsed.assumeYes = true;
       continue;
     }
 
@@ -617,7 +633,10 @@ export function parseCliArgs(argv: string[]): ParsedCliArgs {
 export function buildServerEntry(options: {
   nodePath: string;
   cliPath: string;
+  /** Fallback data dir (process env → platform default) when neither a flag nor a saved value applies. */
   dataDir: string;
+  /** Explicit `--data-dir` flag value; wins over any previously saved config value. */
+  explicitDataDir?: string;
   youtubeApiKey?: string;
   geminiApiKey?: string;
   googleApiKey?: string;
@@ -629,9 +648,13 @@ export function buildServerEntry(options: {
   const existingEnv = isRecord(options.existingEntry?.env)
     ? stringifyEnv(options.existingEntry.env)
     : {};
+  // Precedence: explicit --data-dir flag > value already saved in the client
+  // config > process env / platform default. Preserves a user's custom
+  // VIDLENS_DATA_DIR across re-runs of `setup` without --data-dir (WS2-2).
+  const savedDataDir = existingEnv.VIDLENS_DATA_DIR;
   const env: Record<string, string> = {
     ...existingEnv,
-    VIDLENS_DATA_DIR: options.dataDir,
+    VIDLENS_DATA_DIR: options.explicitDataDir ?? savedDataDir ?? options.dataDir,
   };
 
   if (options.youtubeApiKey) {
@@ -969,6 +992,7 @@ function createCliDeps(overrides: Partial<CliDeps>): CliDeps {
     cliPath,
     now: overrides.now ?? (() => new Date()),
     isNpx: overrides.isNpx ?? isNpxInvocation(env, cliPath),
+    interactive: overrides.interactive ?? Boolean(process.stdin.isTTY),
     promptLine: overrides.promptLine ?? defaultPromptLine,
     runCommand: overrides.runCommand ?? defaultRunCommand,
   };
@@ -1132,7 +1156,10 @@ function renderSetupReport(parsed: ParsedCliArgs, deps: CliDeps): string {
   const targetClients = parsed.clientIds.length > 0
     ? dedupeClientIds(parsed.clientIds)
     : autoDetected.length > 0 ? autoDetected : ["claude_desktop" as KnownClientId];
-  const dataDir = parsed.dataDir ?? deps.env.VIDLENS_DATA_DIR ?? resolveDefaultDataDir(deps.homeDir, deps.platform);
+  // Fallback only: process env → platform default. The explicit flag and any
+  // saved config value take precedence inside buildServerEntry (WS2-2).
+  const fallbackDataDir = deps.env.VIDLENS_DATA_DIR ?? resolveDefaultDataDir(deps.homeDir, deps.platform);
+  const explicitDataDir = parsed.dataDir;
   const lines: string[] = [];
   const errors: string[] = [];
 
@@ -1152,7 +1179,8 @@ function renderSetupReport(parsed: ParsedCliArgs, deps: CliDeps): string {
         const entry = buildServerEntry({
           nodePath: deps.nodePath,
           cliPath: deps.cliPath,
-          dataDir,
+          dataDir: fallbackDataDir,
+          explicitDataDir,
           youtubeApiKey: parsed.youtubeApiKey,
           geminiApiKey: parsed.geminiApiKey,
           googleApiKey: parsed.googleApiKey,
@@ -1193,7 +1221,8 @@ function renderSetupReport(parsed: ParsedCliArgs, deps: CliDeps): string {
       const entry = buildServerEntry({
         nodePath: deps.nodePath,
         cliPath: deps.cliPath,
-        dataDir,
+        dataDir: fallbackDataDir,
+        explicitDataDir,
         youtubeApiKey: parsed.youtubeApiKey,
         geminiApiKey: parsed.geminiApiKey,
         googleApiKey: parsed.googleApiKey,
@@ -1235,7 +1264,8 @@ function renderSetupReport(parsed: ParsedCliArgs, deps: CliDeps): string {
     const entry = buildServerEntry({
       nodePath: deps.nodePath,
       cliPath: deps.cliPath,
-      dataDir,
+      dataDir: fallbackDataDir,
+      explicitDataDir,
       youtubeApiKey: parsed.youtubeApiKey,
       geminiApiKey: parsed.geminiApiKey,
       googleApiKey: parsed.googleApiKey,
@@ -1275,7 +1305,8 @@ function renderSetupReport(parsed: ParsedCliArgs, deps: CliDeps): string {
   const entry = buildServerEntry({
     nodePath: deps.nodePath,
     cliPath: deps.cliPath,
-    dataDir,
+    dataDir: fallbackDataDir,
+    explicitDataDir,
     useNpx: deps.isNpx,
     packageName: deps.packageMeta.name,
     extraEnv: buildSetupExtraEnv(parsed),
@@ -1416,7 +1447,7 @@ Usage:
   vidlens-mcp update-deps     Refresh managed yt-dlp and Deno helper binaries
 
 Common flags:
-  --client <id>              Target client (claude_desktop, claude_code, cursor, vscode, codex)
+  --client <id>              Target client (claude_desktop, claude_code, codex)
   --data-dir <path>          Override VIDLENS_DATA_DIR for generated config
   --platform <id>            Doctor: show one platform readiness row
   --youtube-api-key <key>    Persist YOUTUBE_API_KEY into generated client config
@@ -1431,6 +1462,7 @@ Common flags:
   --stt-provider <id>        Persist VIDLENS_STT_PROVIDER (auto, whisper-cpp, gemini, openai, none)
   --cookies-from-browser <b> Persist browser cookie source for yt-dlp
   --advanced                Setup: prompt for optional keys, STT, web search, and cookies
+  --yes, -y                  Setup: consent to install prompts non-interactively (yt-dlp, global install)
   --no-live                  Doctor: skip live network validation probes
   --print-only               Setup: print generated config without writing files
   -h, --help                 Show this help
@@ -1788,6 +1820,24 @@ function suppressExperimentalWarnings(): void {
     if (name === "ExperimentalWarning") return;
     return (orig as Function).call(process, warning, nameOrOptions, ...rest);
   }) as typeof process.emitWarning;
+}
+
+/**
+ * Consent gate for actions that install software (yt-dlp download, global npm
+ * install). `--yes` opts in unconditionally. Interactive TTYs are prompted and
+ * default to yes on empty input. Non-interactive runs (pipes, CI) default to NO
+ * and print a hint so scripts never silently install without `--yes`.
+ */
+async function confirmInstallConsent(question: string, parsed: ParsedCliArgs, deps: CliDeps): Promise<boolean> {
+  if (parsed.assumeYes) {
+    return true;
+  }
+  if (!deps.interactive) {
+    deps.writeStderr("    Skipped (non-interactive input). Re-run with --yes to allow this automatically.\n");
+    return false;
+  }
+  const answer = await deps.promptLine(question);
+  return !answer || answer.trim().toLowerCase() !== "n";
 }
 
 function defaultPromptLine(question: string): Promise<string> {

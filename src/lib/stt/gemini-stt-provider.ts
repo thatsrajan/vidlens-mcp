@@ -1,11 +1,17 @@
 import { readFileSync } from "node:fs";
 import { basename, extname } from "node:path";
 import { GoogleGenAI } from "@google/genai";
-import { chunkAudioForStt, offsetTranscript, stitchTranscripts } from "./chunker.js";
+import { chunkAudioForStt, cleanupChunks, offsetTranscript, stitchTranscripts } from "./chunker.js";
 import type { SttProvider, SttTranscribeOptions, SttTranscriptionResult } from "./types.js";
 import type { TranscriptRecord } from "../types.js";
 import { reportProgress } from "../progress.js";
 import { ensureUsefulTranscriptText } from "./validation.js";
+import { withRetry } from "../retry.js";
+
+// Gemini caps an inline request at ~20 MB; base64 inflates raw bytes by ~33%, so keep
+// raw audio per chunk under ~15 MB to stay within the limit after encoding.
+const GEMINI_MAX_CHUNK_BYTES = 15 * 1024 * 1024;
+const GEMINI_REQUEST_TIMEOUT_MS = 120_000;
 
 export class GeminiSttProvider implements SttProvider {
   readonly id = "gemini" as const;
@@ -17,30 +23,36 @@ export class GeminiSttProvider implements SttProvider {
   ) {}
 
   async transcribe(audioPath: string, options: SttTranscribeOptions = {}): Promise<SttTranscriptionResult> {
-    const chunks = await chunkAudioForStt(audioPath);
-    const transcripts: TranscriptRecord[] = [];
-    for (let index = 0; index < chunks.length; index += 1) {
-      const chunk = chunks[index]!;
+    const chunks = await chunkAudioForStt(audioPath, { maxBytes: GEMINI_MAX_CHUNK_BYTES });
+    try {
+      const transcripts: TranscriptRecord[] = [];
+      for (let index = 0; index < chunks.length; index += 1) {
+        const chunk = chunks[index]!;
+        await reportProgress(options.progressReporter, {
+          phase: "stt",
+          current: index,
+          total: chunks.length,
+          message: `Transcribing chunk ${index + 1}/${chunks.length}`,
+        });
+        const transcript = await withRetry(
+          () => this.transcribeOne(chunk.path, options.videoId ?? basename(audioPath), options.languageHint),
+        );
+        transcripts.push(offsetTranscript(transcript, chunk.startSec));
+      }
       await reportProgress(options.progressReporter, {
         phase: "stt",
-        current: index,
+        current: chunks.length,
         total: chunks.length,
-        message: `Transcribing chunk ${index + 1}/${chunks.length}`,
+        message: "Transcription complete",
       });
-      const transcript = await this.transcribeOne(chunk.path, options.videoId ?? basename(audioPath), options.languageHint);
-      transcripts.push(offsetTranscript(transcript, chunk.startSec));
+      return {
+        transcript: stitchTranscripts(options.videoId ?? basename(audioPath), transcripts),
+        chunksProcessed: chunks.length,
+        totalChunks: chunks.length,
+      };
+    } finally {
+      cleanupChunks(chunks, audioPath);
     }
-    await reportProgress(options.progressReporter, {
-      phase: "stt",
-      current: chunks.length,
-      total: chunks.length,
-      message: "Transcription complete",
-    });
-    return {
-      transcript: stitchTranscripts(options.videoId ?? basename(audioPath), transcripts),
-      chunksProcessed: chunks.length,
-      totalChunks: chunks.length,
-    };
   }
 
   private async transcribeOne(path: string, videoId: string, languageHint?: string): Promise<TranscriptRecord> {
@@ -60,6 +72,10 @@ export class GeminiSttProvider implements SttProvider {
           { inlineData: { mimeType, data: bytes } },
         ],
       }],
+      config: {
+        abortSignal: AbortSignal.timeout(GEMINI_REQUEST_TIMEOUT_MS),
+        httpOptions: { timeout: GEMINI_REQUEST_TIMEOUT_MS },
+      },
     });
     const text = ensureUsefulTranscriptText(readGeminiText(response), "Gemini");
     return {

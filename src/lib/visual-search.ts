@@ -62,6 +62,12 @@ export interface IndexVisualContentResult {
   framesExtracted: number;
   framesAnalyzed: number;
   framesIndexed: number;
+  /** Sampled frames whose ffmpeg extraction failed (surfaced, non-fatal). */
+  framesFailedExtraction: number;
+  /** Frames Apple Vision could not analyze (surfaced, non-fatal). */
+  visionFailedFrames: number;
+  /** Frames whose Gemini description call failed after retries (provider not stamped on them). */
+  descriptionFailures: number;
   intervalSec: number;
   maxFrames: number;
   descriptionProvider: "none" | "gemini";
@@ -354,6 +360,14 @@ export class VisualIndexStore {
     return row.count;
   }
 
+  /** Cheap one-query digest of the whole visual index (for recallWorkspace). */
+  getSummary(): { indexedVideoCount: number; totalFrames: number } {
+    const row = this.db.prepare(
+      "SELECT COUNT(*) AS frames, COUNT(DISTINCT video_id) AS videos FROM visual_frames",
+    ).get() as { frames: number; videos: number };
+    return { indexedVideoCount: row.videos, totalFrames: row.frames };
+  }
+
   getFrameTimeRange(videoId: string): { count: number; minSec: number; maxSec: number } | null {
     const row = this.db.prepare(
       "SELECT COUNT(*) AS count, MIN(timestamp_sec) AS min_sec, MAX(timestamp_sec) AS max_sec FROM visual_frames WHERE video_id = ?",
@@ -377,6 +391,7 @@ export class VisualSearchEngine {
   readonly store: VisualIndexStore;
   readonly geminiDescriber: GeminiVisualDescriber;
   readonly visionAnalyzer: MacOSVisionAnalyzer;
+  private readonly visionInjected: boolean;
   private readonly queryEmbeddingCache = new SimpleLruCache<string, number[]>(64);
 
   constructor(
@@ -386,8 +401,14 @@ export class VisualSearchEngine {
     config: { dataDir?: string; store?: VisualIndexStore; visionAnalyzer?: MacOSVisionAnalyzer; geminiDescriber?: GeminiVisualDescriber } = {},
   ) {
     this.store = config.store ?? new VisualIndexStore({ dataDir: config.dataDir });
+    this.visionInjected = Boolean(config.visionAnalyzer);
     this.visionAnalyzer = config.visionAnalyzer ?? new MacOSVisionAnalyzer();
     this.geminiDescriber = config.geminiDescriber ?? new GeminiVisualDescriber();
+  }
+
+  /** Apple Vision OCR / feature prints only work on macOS (or when a test injects an analyzer). */
+  private get visionAvailable(): boolean {
+    return this.visionInjected || process.platform === "darwin";
   }
 
   async indexVideo(params: IndexVisualContentParams): Promise<IndexVisualContentResult> {
@@ -402,6 +423,14 @@ export class VisualSearchEngine {
     const embeddingSelection = resolveGeminiEmbeddingSelection(params.includeGeminiEmbeddings);
     const embeddingProvider = embeddingSelection ? await createEmbeddingProvider(embeddingSelection) : null;
     const embeddingProviderKind: "none" | "gemini" = embeddingProvider ? "gemini" : "none";
+
+    const visionAvailable = this.visionAvailable;
+    // On non-macOS with no Gemini descriptions there is no visual signal to index at all.
+    if (!visionAvailable && descriptionProvider !== "gemini") {
+      throw new Error(
+        "Visual indexing needs Apple Vision (macOS) or Gemini frame descriptions. This platform has no Apple Vision; set GEMINI_API_KEY to enable Gemini descriptions, or run on macOS for on-device OCR.",
+      );
+    }
 
     if (params.forceReindex) {
       this.store.removeFramesForVideo(videoId);
@@ -434,21 +463,23 @@ export class VisualSearchEngine {
     const existingByPath = new Map(this.store.listFrames({ videoId }).map((frame) => [frame.framePath, frame]));
     const pendingAssets = keyframes.assets.filter((asset) => params.forceReindex || !existingByPath.has(asset.filePath));
 
-    // Run OCR and Gemini descriptions IN PARALLEL — they're independent
-    const [analyses, descriptions] = await Promise.all([
-      pendingAssets.length > 0
-        ? this.visionAnalyzer.analyzeFrames(pendingAssets.map((asset) => asset.filePath))
-        : Promise.resolve([]),
+    // Run OCR (Apple Vision, macOS-only) and Gemini descriptions IN PARALLEL — they're independent.
+    const [visionBatch, descriptionBatch] = await Promise.all([
+      visionAvailable && pendingAssets.length > 0
+        ? this.visionAnalyzer.analyzeFramesBatch(pendingAssets.map((asset) => asset.filePath))
+        : Promise.resolve({ analyses: [], failures: [] }),
       descriptionProvider === "gemini"
       ? this.geminiDescriber.describeFrames(pendingAssets.map((asset) => ({
         framePath: asset.filePath,
         videoId,
         timestampSec: asset.timestampSec ?? 0,
       })))
-      : Promise.resolve([]),
+      : Promise.resolve({ results: [], failures: 0 }),
     ]);
-    const analysisByPath = new Map(analyses.map((analysis) => [analysis.framePath, analysis]));
-    const descriptionByPath = new Map(descriptions.map((item) => [item.framePath, item.description]));
+    const analysisByPath = new Map(visionBatch.analyses.map((analysis) => [analysis.framePath, analysis]));
+    const descriptionByPath = new Map(descriptionBatch.results.map((item) => [item.framePath, item.description]));
+    const visionFailedFrames = visionBatch.failures.length;
+    const descriptionFailures = descriptionBatch.failures;
 
     const retrievalTexts = pendingAssets.map((asset) => {
       const analysis = analysisByPath.get(asset.filePath);
@@ -499,7 +530,9 @@ export class VisualSearchEngine {
         retrievalText,
         featureVector: analysis?.featureVector,
         textEmbedding: embeddingByPath.get(asset.filePath),
-        descriptionModel: descriptionProvider === "gemini" ? this.geminiDescriber.model : undefined,
+        // Only stamp the description model on frames that actually got a Gemini description —
+        // frames whose call failed (quota/auth) must not falsely claim provider coverage.
+        descriptionModel: descriptionProvider === "gemini" && visualDescription ? this.geminiDescriber.model : undefined,
         embeddingProvider: embeddingProviderKind,
         embeddingModel: embeddingProvider?.selection.model,
         embeddingDimensions: embeddingProvider?.selection.dimensions,
@@ -516,6 +549,9 @@ export class VisualSearchEngine {
       framesExtracted: keyframes.framesExtracted,
       framesAnalyzed: pendingAssets.length,
       framesIndexed: evidence.length,
+      framesFailedExtraction: keyframes.framesFailed,
+      visionFailedFrames,
+      descriptionFailures,
       intervalSec,
       maxFrames,
       descriptionProvider,
@@ -524,7 +560,12 @@ export class VisualSearchEngine {
       embeddingModel: embeddingProvider?.selection.model,
       embeddingDimensions: embeddingProvider?.selection.dimensions,
       evidence: evidence.sort((a, b) => a.timestampSec - b.timestampSec).slice(0, 12),
-      limitations: buildIndexLimitations(descriptionProvider, embeddingProviderKind),
+      limitations: buildIndexLimitations(descriptionProvider, embeddingProviderKind, {
+        visionAvailable,
+        framesFailedExtraction: keyframes.framesFailed,
+        visionFailedFrames,
+        descriptionFailures,
+      }),
     };
   }
 
@@ -583,8 +624,7 @@ export class VisualSearchEngine {
         const videoAsset = this.findVideoAsset(params.videoId);
         const videoDuration = videoAsset?.durationSec;
         if (videoDuration && videoDuration > 0) {
-          const coverage = (range.maxSec - range.minSec) / videoDuration;
-          needsExpansion = coverage < 0.5;
+          needsExpansion = coverageRatio(range.minSec, range.maxSec, videoDuration) < VISUAL_COVERAGE_THRESHOLD;
         }
       }
     }
@@ -665,10 +705,11 @@ export class VisualSearchEngine {
       return false;
     }
 
-    // Coverage = span of indexed frames / video duration
-    const coveredSpan = range.maxSec - range.minSec;
-    const coverage = coveredSpan / videoDuration;
-    return coverage < 0.5;
+    // Coverage = span of indexed frames / video duration. The thumbnail sampler spreads frames
+    // across the full duration (computeSampleTimestamps), so a completed index of a long video
+    // has coverage ≈ (maxFrames-1)/maxFrames — well above the threshold — instead of the old
+    // t=0-only walk that could never satisfy this check for videos longer than ~8 min.
+    return coverageRatio(range.minSec, range.maxSec, videoDuration) < VISUAL_COVERAGE_THRESHOLD;
   }
 
   private findVideoAsset(videoId: string): MediaAsset | undefined {
@@ -696,7 +737,7 @@ export class VisualSearchEngine {
   }
 
   private async analyzeAdHocFrame(framePath: string, videoId?: string, assetId?: string, timestampSec = 0): Promise<VisualIndexRecord> {
-    const analysis = await this.visionAnalyzer.analyzeFrames([framePath]);
+    const analysis = this.visionAvailable ? await this.visionAnalyzer.analyzeFrames([framePath]) : [];
     const first = analysis[0];
     return {
       frameId: randomUUID(),
@@ -713,6 +754,19 @@ export class VisualSearchEngine {
       updatedAt: new Date().toISOString(),
     };
   }
+}
+
+/**
+ * Minimum fraction of a video's duration that indexed frames must span before auto-reindex is
+ * skipped. Kept consistent with the thumbnail sampler (computeSampleTimestamps): a fully indexed
+ * long video spans ≈ (maxFrames-1)/maxFrames of the duration, which clears this threshold.
+ */
+export const VISUAL_COVERAGE_THRESHOLD = 0.5;
+
+/** Fraction of `durationSec` spanned by indexed frames between `minSec` and `maxSec`. */
+export function coverageRatio(minSec: number, maxSec: number, durationSec: number): number {
+  if (!(durationSec > 0)) return 1;
+  return (maxSec - minSec) / durationSec;
 }
 
 function resolveVisualDataDir(baseDataDir?: string): string {
@@ -917,12 +971,28 @@ function resolveGeminiEmbeddingSelection(includeGeminiEmbeddings?: boolean): Emb
   return resolveEmbeddingSelection({ embeddingProvider: "gemini" });
 }
 
-function buildIndexLimitations(descriptionProvider: "none" | "gemini", embeddingProvider: "none" | "gemini"): string[] {
+function buildIndexLimitations(
+  descriptionProvider: "none" | "gemini",
+  embeddingProvider: "none" | "gemini",
+  degraded?: { visionAvailable: boolean; framesFailedExtraction: number; visionFailedFrames: number; descriptionFailures: number },
+): string[] {
   const limitations = [
     "This indexes video frames, not transcript chunks. Results are grounded in extracted frame images.",
     "Frames are sampled at intervals, so extremely brief visual moments can still be missed.",
     "Apple Vision feature prints are for image-to-image similarity, not language understanding.",
   ];
+  if (degraded && !degraded.visionAvailable) {
+    limitations.push("Apple Vision OCR is unavailable on this platform (macOS only); frames were indexed without on-device OCR/feature prints.");
+  }
+  if (degraded && degraded.framesFailedExtraction > 0) {
+    limitations.push(`${degraded.framesFailedExtraction} frame(s) could not be extracted by ffmpeg and were skipped.`);
+  }
+  if (degraded && degraded.visionFailedFrames > 0) {
+    limitations.push(`${degraded.visionFailedFrames} frame(s) failed Apple Vision analysis and were indexed without OCR.`);
+  }
+  if (degraded && degraded.descriptionFailures > 0) {
+    limitations.push(`${degraded.descriptionFailures} frame(s) failed Gemini description (e.g. quota/auth) and are not marked as Gemini-described.`);
+  }
   if (descriptionProvider === "gemini") {
     limitations.push("Gemini 2.5 Flash is used to describe frame imagery in plain text when available.");
   } else {

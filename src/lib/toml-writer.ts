@@ -32,7 +32,9 @@ function removeTables(input: string, tableNames: string[]): string {
   const output: string[] = [];
   let skipping = false;
   for (const line of lines) {
-    const match = line.match(/^\s*\[([^\]]+)\]\s*$/);
+    // Match a table header, tolerating whitespace inside the brackets
+    // (`[ table ]`) and a trailing comment (`[table] # note`).
+    const match = line.match(/^\s*\[\s*([^\]]+?)\s*\]\s*(?:#.*)?$/);
     if (match) {
       skipping = targets.has(match[1]!);
     }

@@ -42,6 +42,12 @@ test("parseCliArgs parses setup flags and client aliases", () => {
   assert.equal(parsed.printOnly, true);
 });
 
+test("parseCliArgs parses --yes and -y into assumeYes", () => {
+  assert.equal(parseCliArgs(["setup", "--yes"]).assumeYes, true);
+  assert.equal(parseCliArgs(["setup", "-y"]).assumeYes, true);
+  assert.equal(parseCliArgs(["setup"]).assumeYes, undefined);
+});
+
 test("buildServerEntry preserves existing env while updating vidlens-mcp fields", () => {
   const entry = buildServerEntry({
     nodePath: "/usr/local/bin/node",

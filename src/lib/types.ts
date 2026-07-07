@@ -512,6 +512,8 @@ export interface ImportPlaylistOutput {
     videoId: string;
     reason: string;
   }>;
+  /** Non-fatal warnings (e.g. Gemini embedding could not run for imported chunks). */
+  warnings?: string[];
   collectionId: string;
   activeCollectionId?: string;
   provenance: Provenance;
@@ -530,6 +532,8 @@ export interface ImportVideosOutput {
     videoId: string;
     reason: string;
   }>;
+  /** Non-fatal warnings (e.g. Gemini embedding could not run for imported chunks). */
+  warnings?: string[];
   collectionId: string;
   activeCollectionId?: string;
   provenance: Provenance;
@@ -1140,9 +1144,13 @@ export interface ExploreYouTubeOutput {
   };
   followUpHints: string[];
   backgroundEnrichment?: {
-    status: "preparing";
+    status: "preparing" | "done" | "failed";
     videosQueued: string[];
     assetsBeingPrepared: string[];
+    /** Redacted summary of any failed enrichment job. */
+    error?: string;
+    /** ISO timestamp of the most recent enrichment status change. */
+    updatedAt?: string;
   };
   limitations: string[];
   provenance: Provenance;
@@ -1453,6 +1461,52 @@ export interface MediaStoreHealthOutput {
   ffmpegVersion?: string;
   ytdlpAvailable: boolean;
   ytdlpVersion?: string;
+  provenance: Provenance;
+}
+
+/** Compact per-workspace digest of everything VidLens already has stored on disk. */
+export interface RecallWorkspaceCollection {
+  collectionId: string;
+  label?: string;
+  videoCount: number;
+  chunkCount: number;
+  embedding: string;
+  lastUpdatedAt: string;
+  isActive: boolean;
+}
+
+export interface RecallWorkspaceCommentCollection {
+  collectionId: string;
+  label?: string;
+  videoCount: number;
+  commentChunkCount: number;
+  lastUpdatedAt: string;
+  isActive: boolean;
+}
+
+export interface RecallWorkspaceOutput {
+  hint: string;
+  dataDir: string;
+  transcriptCollections: {
+    count: number;
+    activeCollectionId?: string;
+    items: RecallWorkspaceCollection[];
+  };
+  commentCollections: {
+    count: number;
+    activeCollectionId?: string;
+    items: RecallWorkspaceCommentCollection[];
+  };
+  mediaStore: {
+    totalAssets: number;
+    totalSizeBytes: number;
+    videoCount: number;
+    byKind: Partial<Record<MediaAssetKind, number>>;
+  };
+  visualIndex?: {
+    indexedVideoCount: number;
+    totalFrames: number;
+  };
   provenance: Provenance;
 }
 

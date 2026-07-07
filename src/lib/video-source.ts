@@ -267,11 +267,16 @@ function maybeUrl(raw: string): URL | null {
 
 function platformForUrl(url: URL): VideoSourcePlatform {
   const host = url.hostname.toLowerCase().replace(/^www\./, "");
-  if (host === "youtu.be" || host.endsWith("youtube.com")) return "youtube";
-  if (host === "x.com" || host.endsWith("twitter.com")) return "x";
-  if (host.endsWith("instagram.com")) return "instagram";
-  if (host.endsWith("tiktok.com")) return "tiktok";
+  if (host === "youtu.be" || hostMatches(host, "youtube.com")) return "youtube";
+  if (hostMatches(host, "x.com") || hostMatches(host, "twitter.com")) return "x";
+  if (hostMatches(host, "instagram.com")) return "instagram";
+  if (hostMatches(host, "tiktok.com")) return "tiktok";
   return "generic_url";
+}
+
+/** Suffix match with a dot boundary so `notyoutube.com` does not match `youtube.com`. */
+function hostMatches(host: string, domain: string): boolean {
+  return host === domain || host.endsWith("." + domain);
 }
 
 function canonicalizeUrl(url: URL, platform: VideoSourcePlatform): string {
@@ -281,7 +286,12 @@ function canonicalizeUrl(url: URL, platform: VideoSourcePlatform): string {
   }
   const clean = new URL(url.toString());
   clean.hash = "";
-  clean.search = "";
+  // Known platforms identify a video by path, so tracking query params are noise
+  // and get stripped. Generic URLs may identify the video *by* query param
+  // (e.g. ?video=123), so preserve their query string.
+  if (platform !== "generic_url") {
+    clean.search = "";
+  }
   clean.pathname = clean.pathname.replace(/\/+$/, "");
   return clean.toString();
 }

@@ -25,7 +25,7 @@ import {
 } from "./analysis.js";
 import { CommentKnowledgeBase } from "./comment-knowledge-base.js";
 import { CacheStore, buildCacheKey, type CacheEntityType } from "./cache-store.js";
-import { createEmbeddingProvider, resolveEmbeddingSelection } from "./embedding-provider.js";
+import { createEmbeddingProvider, resolveEmbeddingSelection, type EmbeddingSelection } from "./embedding-provider.js";
 import { detectKnownClients, readPackageMetadata } from "./install-diagnostics.js";
 import { TranscriptKnowledgeBase } from "./knowledge-base.js";
 import { MediaStore } from "./media-store.js";
@@ -36,7 +36,7 @@ import { CookieStore } from "./auth/cookie-store.js";
 import { assessYtDlpFreshness, fetchLatestYtDlpVersion } from "./diagnostics/yt-dlp-freshness.js";
 import { probeJsRuntime } from "./diagnostics/js-runtime.js";
 import { allProviders, providerForSource } from "./providers/registry.js";
-import { redactError } from "./redactor.js";
+import { redactError, redactSecrets } from "./redactor.js";
 import { ScrapeCreatorsClient, buildSocialPlaylist, sampleSocialTrends } from "./scrapecreators-client.js";
 import { selectSttProvider } from "./stt/selector.js";
 import { selectWebSearchProvider } from "./web-search/selector.js";
@@ -111,6 +111,7 @@ import type {
   MeasureAudienceSentimentOutput,
   MediaStoreHealthOutput,
   NicheCompetitor,
+  RecallWorkspaceOutput,
   Pagination,
   PlaylistKnowledgeBaseInput,
   Provenance,
@@ -185,6 +186,20 @@ const FALLBACK_DEPTH: Record<SourceTier, 0 | 1 | 2 | 3> = {
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
+type EnrichmentAsset = "transcript_search" | "visual_search";
+
+/** In-memory record of a background enrichment job kicked off by exploreYouTube. */
+interface EnrichmentJob {
+  key: string;
+  asset: EnrichmentAsset;
+  status: "preparing" | "done" | "failed";
+  videoIds: string[];
+  /** Redacted error summary when status === "failed". */
+  error?: string;
+  startedAt: number;
+  updatedAt: number;
+}
+
 function defaultServiceDataDir(): string {
   return process.env.VIDLENS_DATA_DIR || join(homedir(), "Library", "Application Support", "vidlens-mcp");
 }
@@ -204,6 +219,8 @@ export class YouTubeService {
   private _thumbnailExtractor?: ThumbnailExtractor;
   private _visualSearch?: VisualSearchEngine;
   private _cacheStore?: CacheStore;
+  /** Tracks in-flight/terminal background enrichment jobs so exploreYouTube can dedupe and report real status. */
+  private readonly enrichmentJobs = new Map<string, EnrichmentJob>();
 
   constructor(config: YouTubeServiceConfig = {}) {
     this.api = new YouTubeApiClient({ apiKey: config.apiKey ?? process.env.YOUTUBE_API_KEY });
@@ -668,9 +685,9 @@ export class YouTubeService {
       },
       videos: resolved.data.videos.slice(0, maxVideos).map((video) => ({
         videoId: video.videoId,
-        title: includeVideoMeta ? video.title : video.title,
-        publishedAt: includeVideoMeta ? video.publishedAt : video.publishedAt,
-        channelTitle: includeVideoMeta ? video.channelTitle : video.channelTitle,
+        title: includeVideoMeta ? video.title : undefined,
+        publishedAt: includeVideoMeta ? video.publishedAt : undefined,
+        channelTitle: includeVideoMeta ? video.channelTitle : undefined,
       })),
       truncated: (resolved.data.videoCountReported ?? resolved.data.videos.length) > maxVideos,
       provenance: resolved.provenance,
@@ -777,9 +794,7 @@ export class YouTubeService {
       prepared.items,
     );
 
-    if (stored.import.imported > 0 && embeddingSelection.kind === "gemini") {
-      await this.knowledgeBase.reindexCollectionEmbeddings(collectionId, embeddingSelection);
-    }
+    const embeddingWarnings = await this.reindexAfterImport(collectionId, stored.import.imported, embeddingSelection);
 
     const activeCollectionId = input.activateCollection === false
       ? this.knowledgeBase.getActiveCollectionId() ?? undefined
@@ -794,6 +809,7 @@ export class YouTubeService {
         failed: stored.import.failed + prepared.failures.length,
       },
       failures: [...(prepared.failures ?? []), ...(stored.failures ?? [])],
+      warnings: embeddingWarnings.length > 0 ? embeddingWarnings : undefined,
       activeCollectionId,
     };
   }
@@ -827,9 +843,7 @@ export class YouTubeService {
       prepared.items,
     );
 
-    if (stored.import.imported > 0 && embeddingSelection.kind === "gemini") {
-      await this.knowledgeBase.reindexCollectionEmbeddings(collectionId, embeddingSelection);
-    }
+    const embeddingWarnings = await this.reindexAfterImport(collectionId, stored.import.imported, embeddingSelection);
 
     const activeCollectionId = input.activateCollection === false
       ? this.knowledgeBase.getActiveCollectionId() ?? undefined
@@ -844,6 +858,7 @@ export class YouTubeService {
         failed: stored.import.failed + prepared.failures.length,
       },
       failures: [...(prepared.failures ?? []), ...(stored.failures ?? [])],
+      warnings: embeddingWarnings.length > 0 ? embeddingWarnings : undefined,
       activeCollectionId,
     };
   }
@@ -920,84 +935,102 @@ export class YouTubeService {
       });
     }
 
+    // yt-dlp is no longer a hard gate: reads reach transcripts via InnerTube first
+    // (no binary, no key), so readiness must probe the same chain (WS8-x).
+    let ytDlpAvailable = false;
     try {
       const probe = await this.ytdlp.probe();
+      ytDlpAvailable = true;
       checks.push({
         name: "yt_dlp_binary",
         status: "ok",
         detail: `${probe.binary} available (${probe.version}).`,
       });
     } catch (error) {
-      const detail = toMessage(error);
       checks.push({
         name: "yt_dlp_binary",
-        status: "error",
-        detail,
-      });
-      suggestions.push("Run `npx vidlens-mcp setup` to auto-download yt-dlp, or visit https://github.com/yt-dlp/yt-dlp#installation");
-      return {
-        videoId,
-        title,
-        importReadiness: {
-          canImport: false,
-          status: "blocked",
-          summary: "Import is blocked because yt-dlp is unavailable.",
-          suggestedCollectionId: TranscriptKnowledgeBase.videosCollectionId({ videoIdsOrUrls: [videoId] }),
-        },
-        transcript: {
-          available: false,
-        },
-        checks,
-        suggestions,
-        provenance: metadataProvenance ?? this.makeProvenance("none", true, checks.map((check) => `${check.name}: ${check.detail}`)),
-      };
-    }
-
-    try {
-      const ytDlpVideo = await this.ytdlp.videoInfo(videoId);
-      title = title ?? ytDlpVideo.title;
-      transcriptAvailable ||= Boolean(ytDlpVideo.transcriptAvailable);
-      transcriptLanguages = transcriptLanguages ?? ytDlpVideo.transcriptLanguages;
-      checks.push({
-        name: "yt_dlp_metadata",
-        status: "ok",
-        detail: `Metadata loaded via yt-dlp. Transcript advertised=${ytDlpVideo.transcriptAvailable ? "true" : "false"}.`,
-      });
-      metadataProvenance = metadataProvenance ?? this.makeProvenance("yt_dlp", false);
-    } catch (error) {
-      checks.push({
-        name: "yt_dlp_metadata",
         status: "warn",
         detail: toMessage(error),
       });
+      suggestions.push("Run `npx vidlens-mcp setup` to auto-download yt-dlp for media downloads and richer fallback, or visit https://github.com/yt-dlp/yt-dlp#installation");
     }
 
+    // Tier 0: InnerTube direct transcript — matches resolveTranscript, works with no
+    // binary and no API key.
     try {
-      transcriptRecord = await this.ytdlp.transcript(videoId, input.language);
+      transcriptRecord = await innertubeTranscript(videoId, input.language);
       transcriptAvailable = true;
+      metadataProvenance = metadataProvenance ?? this.makeProvenance("innertube", false);
       const sparse = isSparseTranscript(transcriptRecord);
-      const estimatedSearchableChunks = estimateTranscriptChunks(transcriptRecord);
       checks.push({
-        name: "yt_dlp_transcript",
+        name: "innertube_transcript",
         status: sparse ? "warn" : "ok",
         detail: sparse
-          ? `Transcript fetched but is sparse (${transcriptRecord.transcriptText.length} chars, ${transcriptRecord.segments.length} segments). Import should still work via whole-transcript fallback.`
-          : `Transcript fetched successfully (${transcriptRecord.transcriptText.length} chars, ${transcriptRecord.segments.length} segments).`,
+          ? `Transcript fetched via InnerTube but is sparse (${transcriptRecord.transcriptText.length} chars, ${transcriptRecord.segments.length} segments). Import should still work via whole-transcript fallback.`
+          : `Transcript fetched via InnerTube (${transcriptRecord.transcriptText.length} chars, ${transcriptRecord.segments.length} segments); no yt-dlp needed for this read.`,
       });
       if (sparse) {
         suggestions.push("This transcript is sparse. V2 now imports it as a single searchable chunk instead of failing, but search quality may be shallow.");
       }
-    } catch (error) {
-      const detail = toMessage(error);
+    } catch {
+      // InnerTube unavailable — fall through to the yt-dlp tier below.
+    }
+
+    if (ytDlpAvailable) {
+      try {
+        const ytDlpVideo = await this.ytdlp.videoInfo(videoId);
+        title = title ?? ytDlpVideo.title;
+        transcriptAvailable ||= Boolean(ytDlpVideo.transcriptAvailable);
+        transcriptLanguages = transcriptLanguages ?? ytDlpVideo.transcriptLanguages;
+        checks.push({
+          name: "yt_dlp_metadata",
+          status: "ok",
+          detail: `Metadata loaded via yt-dlp. Transcript advertised=${ytDlpVideo.transcriptAvailable ? "true" : "false"}.`,
+        });
+        metadataProvenance = metadataProvenance ?? this.makeProvenance("yt_dlp", false);
+      } catch (error) {
+        checks.push({
+          name: "yt_dlp_metadata",
+          status: "warn",
+          detail: toMessage(error),
+        });
+      }
+
+      if (!transcriptRecord) {
+        try {
+          transcriptRecord = await this.ytdlp.transcript(videoId, input.language);
+          transcriptAvailable = true;
+          const sparse = isSparseTranscript(transcriptRecord);
+          checks.push({
+            name: "yt_dlp_transcript",
+            status: sparse ? "warn" : "ok",
+            detail: sparse
+              ? `Transcript fetched but is sparse (${transcriptRecord.transcriptText.length} chars, ${transcriptRecord.segments.length} segments). Import should still work via whole-transcript fallback.`
+              : `Transcript fetched successfully (${transcriptRecord.transcriptText.length} chars, ${transcriptRecord.segments.length} segments).`,
+          });
+          if (sparse) {
+            suggestions.push("This transcript is sparse. V2 now imports it as a single searchable chunk instead of failing, but search quality may be shallow.");
+          }
+        } catch (error) {
+          const detail = toMessage(error);
+          checks.push({
+            name: "yt_dlp_transcript",
+            status: "error",
+            detail,
+          });
+          suggestions.push("Try a video with public captions or confirm the video is not region/age restricted.");
+          if (detail.toLowerCase().includes("subtitle") || detail.toLowerCase().includes("caption")) {
+            suggestions.push("If this specific video has no public subtitle track, import will stay blocked until captions are available.");
+          }
+        }
+      }
+    } else if (!transcriptRecord) {
       checks.push({
         name: "yt_dlp_transcript",
         status: "error",
-        detail,
+        detail: "yt-dlp is unavailable and InnerTube did not return a transcript for this video.",
       });
-      suggestions.push("Try a video with public captions or confirm the video is not region/age restricted.");
-      if (detail.toLowerCase().includes("subtitle") || detail.toLowerCase().includes("caption")) {
-        suggestions.push("If this specific video has no public subtitle track, import will stay blocked until captions are available.");
-      }
+      suggestions.push("Install yt-dlp (`npx vidlens-mcp setup`) so import can fall back beyond InnerTube for captions.");
     }
 
     if (!title) {
@@ -1035,7 +1068,10 @@ export class YouTubeService {
         : "Transcript is importable and should chunk normally for semantic search.";
 
     if (!canImport && !this.api.isConfigured()) {
-      suggestions.push("Adding YOUTUBE_API_KEY helps metadata diagnostics, even though transcript import still depends on public captions via yt-dlp.");
+      suggestions.push("Adding YOUTUBE_API_KEY helps metadata diagnostics, even though transcript import still depends on public captions via InnerTube/yt-dlp.");
+    }
+    if (canImport && !ytDlpAvailable) {
+      suggestions.push("yt-dlp is not installed, but transcripts resolve via InnerTube, so transcript import will work. Install yt-dlp for media downloads and richer fallback.");
     }
 
     return {
@@ -1642,6 +1678,9 @@ export class YouTubeService {
       });
     }
 
+    // Platforms ScrapeCreators actually returned importable results for — the web
+    // fallback skips these to avoid double-searching the same platform.
+    const scrapeCreatorsServed = new Set<"tiktok" | "instagram">();
     const scrapeCreatorsPlatforms = (["tiktok", "instagram"] as const).filter((platform) => requestedPlatforms.has(platform));
     if (scrapeCreatorsPlatforms.length > 0 && !this.isDryRun(options)) {
       if (this.scrapeCreatorsApiKey) {
@@ -1668,6 +1707,9 @@ export class YouTubeService {
                 durationSec: item.durationSec,
                 matchReason: "Matched by ScrapeCreators social search.",
               });
+              if (source.platform === "tiktok" || source.platform === "instagram") {
+                scrapeCreatorsServed.add(source.platform);
+              }
               accepted += 1;
             } catch {
               // Ignore non-importable social results.
@@ -1712,6 +1754,15 @@ export class YouTubeService {
     const webSearchSelection = selectWebSearchProvider(process.env);
     for (const platform of ["x", "instagram", "tiktok", "generic_url"] as const) {
       if (!requestedPlatforms.has(platform)) continue;
+      if ((platform === "tiktok" || platform === "instagram") && scrapeCreatorsServed.has(platform)) {
+        searched.push({
+          platform,
+          mode: "web_fallback",
+          status: "skipped",
+          detail: "Already served by ScrapeCreators; skipping redundant web-search fallback.",
+        });
+        continue;
+      }
       if (this.isDryRun(options)) {
         const sample = sampleSourceForPlatform(platform, query);
         results.push({
@@ -1792,9 +1843,20 @@ export class YouTubeService {
       "Cross-platform social search is capability-based: YouTube is native, local assets are searched locally, and social/web sources currently import best from direct URLs.",
     );
 
+    // Dedupe by assetKey (falling back to canonicalUrl) so ScrapeCreators and the
+    // web fallback can't surface the same video twice.
+    const seenSourceKeys = new Set<string>();
+    const dedupedResults = results.filter((item) => {
+      const key = item.assetKey || item.canonicalUrl;
+      if (!key) return true;
+      if (seenSourceKeys.has(key)) return false;
+      seenSourceKeys.add(key);
+      return true;
+    });
+
     return {
       query,
-      results: results.slice(0, maxResults),
+      results: dedupedResults.slice(0, maxResults),
       searched,
       limitations: dedupeStrings(limitations),
       provenance: this.makeProvenance("none", searched.some((item) => item.status !== "ok"), searched.map((item) => `${item.platform}: ${item.detail}`)),
@@ -2028,7 +2090,7 @@ export class YouTubeService {
       },
       downloadedBytes: result.downloadedBytes,
       durationMs: result.durationMs,
-      cached: result.downloadedBytes === 0,
+      cached: result.cached,
       provenance: this.makeProvenance("yt_dlp", false, [`${source.platform} asset stored locally for Claude/Codex MCP use.`]),
     };
 	  }
@@ -2280,6 +2342,75 @@ export class YouTubeService {
     };
   }
 
+  /**
+   * Cheap session-start digest of everything already persisted on disk under this
+   * data dir. Reuses the same code paths as listCollections / listCommentCollections
+   * / mediaStoreHealth so no new queries are introduced; skips the ffmpeg/yt-dlp
+   * probes so it stays instant.
+   */
+  async recallWorkspace(options: ServiceOptions = {}): Promise<RecallWorkspaceOutput> {
+    if (this.isDryRun(options)) {
+      return this.sampleRecallWorkspace();
+    }
+
+    const [transcripts, comments] = await Promise.all([
+      this.listCollections(),
+      this.listCommentCollections(),
+    ]);
+    const stats = this.mediaStore.getStats();
+
+    let visualIndex: RecallWorkspaceOutput["visualIndex"];
+    try {
+      const summary = this.visualSearch.store.getSummary();
+      if (summary.totalFrames > 0) {
+        visualIndex = summary;
+      }
+    } catch {
+      visualIndex = undefined;
+    }
+
+    return {
+      hint:
+        "These collections and media assets persist on disk across sessions. Search or read them (searchTranscripts, readTranscript, searchComments, searchVisualContent, listMediaAssets) instead of re-importing — re-importing wastes time and API quota.",
+      dataDir: this.knowledgeBase.dataDir,
+      transcriptCollections: {
+        count: transcripts.collections.length,
+        activeCollectionId: transcripts.activeCollectionId,
+        items: transcripts.collections.map((c) => ({
+          collectionId: c.collectionId,
+          label: c.label,
+          videoCount: c.videoCount,
+          chunkCount: c.totalChunks,
+          embedding: c.embeddingModel ?? c.embeddingProvider ?? "local",
+          lastUpdatedAt: c.lastUpdatedAt,
+          isActive: Boolean(c.isActive),
+        })),
+      },
+      commentCollections: {
+        count: comments.collections.length,
+        activeCollectionId: comments.activeCollectionId,
+        items: comments.collections.map((c) => ({
+          collectionId: c.collectionId,
+          label: c.label,
+          videoCount: c.videoCount,
+          commentChunkCount: c.totalCommentChunks,
+          lastUpdatedAt: c.lastUpdatedAt,
+          isActive: Boolean(c.isActive),
+        })),
+      },
+      mediaStore: {
+        totalAssets: stats.totalAssets,
+        totalSizeBytes: stats.totalSizeBytes,
+        videoCount: stats.videoCount,
+        byKind: stats.byKind,
+      },
+      visualIndex,
+      provenance: this.makeProvenance("none", false, [
+        `${transcripts.collections.length} transcript collection(s), ${comments.collections.length} comment collection(s), ${stats.totalAssets} media asset(s).`,
+      ]),
+    };
+  }
+
   async indexVisualContent(input: IndexVisualContentInput, options: ServiceOptions = {}): Promise<IndexVisualContentOutput> {
     const source = resolveVideoSource(input.videoIdOrUrl);
     const videoId = source.assetKey;
@@ -2497,7 +2628,7 @@ export class YouTubeService {
         videos.push(result.value.video);
         provenances.push(result.value.provenance);
       } else {
-        failureNotes.push(result.reason instanceof Error ? result.reason.message : String(result.reason));
+        failureNotes.push(redactError(result.reason));
       }
     }
 
@@ -2669,6 +2800,17 @@ export class YouTubeService {
     input: RecommendUploadWindowsInput,
     options: ServiceOptions = {},
   ): Promise<RecommendUploadWindowsOutput> {
+    if (input.timezone) {
+      try {
+        // Throws RangeError for an unknown/invalid IANA zone; surface as INVALID_INPUT.
+        new Intl.DateTimeFormat("en-US", { timeZone: input.timezone });
+      } catch {
+        throw new ToolExecutionError(
+          this.invalidInputDetail(`Invalid timezone: ${input.timezone}. Provide a valid IANA timezone such as "America/New_York" or "UTC".`),
+        );
+      }
+    }
+
     const catalog = await this.listChannelCatalog(
       {
         channelIdOrHandleOrUrl: input.channelIdOrHandleOrUrl,
@@ -3135,33 +3277,38 @@ export class YouTubeService {
 
     const shouldPrepareTranscripts = input.prepareTranscriptSearch ?? (depth === "standard" || depth === "deep");
     const shouldPrepareVisual = input.prepareVisualSearch ?? (depth !== "quick" && topVideoIds.length > 0);
-    if (shouldPrepareTranscripts || shouldPrepareVisual) {
-      const assetsBeingPrepared: string[] = [];
+    if ((shouldPrepareTranscripts || shouldPrepareVisual) && topVideoIds.length > 0) {
+      const jobs: EnrichmentJob[] = [];
 
       if (shouldPrepareTranscripts) {
-        assetsBeingPrepared.push("transcript_search");
+        const transcriptVideoIds = topVideoIds.slice(0, 5);
         const collectionId = `explore-${topVideoIds[0]}`;
-        void this.importVideos(
-          { videoIdsOrUrls: topVideoIds.slice(0, 5), collectionId, activateCollection: true },
-          options,
-        ).catch(() => {});
+        jobs.push(this.startEnrichmentJob(
+          `transcript_search:${collectionId}`,
+          "transcript_search",
+          transcriptVideoIds,
+          () => this.importVideos(
+            { videoIdsOrUrls: transcriptVideoIds, collectionId, activateCollection: true },
+            options,
+          ),
+        ));
       }
 
       if (shouldPrepareVisual) {
-        assetsBeingPrepared.push("visual_search");
-        // Only index the top result — downloading + extracting is expensive
-        void this.indexVisualContent(
-          { videoIdOrUrl: topVideoIds[0], autoDownload: true, downloadFormat: "worst_video" },
-          options,
-        ).catch(() => {});
+        // Only index the top result — downloading + extracting is expensive.
+        jobs.push(this.startEnrichmentJob(
+          `visual_search:${topVideoIds[0]}`,
+          "visual_search",
+          [topVideoIds[0]],
+          () => this.indexVisualContent(
+            { videoIdOrUrl: topVideoIds[0], autoDownload: true, downloadFormat: "worst_video" },
+            options,
+          ),
+        ));
       }
 
-      if (assetsBeingPrepared.length > 0) {
-        backgroundEnrichment = {
-          status: "preparing",
-          videosQueued: topVideoIds.slice(0, assetsBeingPrepared.includes("visual_search") ? 1 : 5),
-          assetsBeingPrepared,
-        };
+      if (jobs.length > 0) {
+        backgroundEnrichment = summarizeEnrichmentJobs(jobs);
       }
     }
 
@@ -3188,6 +3335,40 @@ export class YouTubeService {
         ? this.mergeProvenances(provenances)
         : this.makeProvenance("none", true),
     };
+  }
+
+  /**
+   * Kick off (or reuse) a background enrichment job. In-flight and already-completed
+   * jobs for the same key are returned as-is (no duplicate downloads); a previously
+   * failed job is retried. Terminal status + a redacted error summary are recorded on
+   * the job so repeated exploreYouTube calls can report real progress (WS4-4).
+   */
+  private startEnrichmentJob(
+    key: string,
+    asset: EnrichmentAsset,
+    videoIds: string[],
+    run: () => Promise<unknown>,
+  ): EnrichmentJob {
+    const existing = this.enrichmentJobs.get(key);
+    if (existing && (existing.status === "preparing" || existing.status === "done")) {
+      return existing;
+    }
+
+    const now = Date.now();
+    const job: EnrichmentJob = { key, asset, status: "preparing", videoIds, startedAt: now, updatedAt: now };
+    this.enrichmentJobs.set(key, job);
+    void run().then(
+      () => {
+        job.status = "done";
+        job.updatedAt = Date.now();
+      },
+      (error) => {
+        job.status = "failed";
+        job.error = redactError(error);
+        job.updatedAt = Date.now();
+      },
+    );
+    return job;
   }
 
   private sampleExploreYouTube(input: ExploreYouTubeInput): ExploreYouTubeOutput {
@@ -3257,7 +3438,7 @@ export class YouTubeService {
 	      } catch (error) {
 	        failures.push({
 	          videoId: raw,
-          reason: error instanceof Error ? error.message : String(error),
+          reason: redactError(error),
         });
 	        continue;
 	      }
@@ -3301,7 +3482,7 @@ export class YouTubeService {
         return {
           success: false as const,
           videoId,
-          reason: error instanceof Error ? error.message : String(error),
+          reason: redactError(error),
         };
       }
     });
@@ -3340,14 +3521,9 @@ export class YouTubeService {
   }
 
 	  private async fetchTranscriptForIndexing(videoId: string, language: string | undefined, options: ServiceOptions): Promise<TranscriptRecord> {
-    const resolved = await this.executeFallback(
-      {
-        yt_dlp: () => this.ytdlp.transcript(videoId, language),
-      },
-      this.sampleTranscript(videoId),
-      options,
-      { partialTiers: [] },
-    );
+    // Use the same InnerTube → yt-dlp chain that reads use, so imports are never
+    // strictly weaker than readTranscript (WS8-x).
+    const resolved = await this.resolveTranscript(videoId, language, options);
 	    return resolved.data;
 	  }
 
@@ -3376,13 +3552,59 @@ export class YouTubeService {
     return [videoRecordForSource(source), result.transcript];
   }
 
+  /**
+   * Embed freshly-imported chunks when either the request selects Gemini or the
+   * STORED collection is already a Gemini collection (so new chunks never stay
+   * lexical-only NULL vectors in a Gemini collection just because the current env
+   * has no key selected). reindexCollectionEmbeddings only embeds missing vectors
+   * when the algorithm is unchanged, so this is cheap. A missing API key throws a
+   * clear error, which is surfaced as a non-fatal import warning rather than
+   * failing the whole import.
+   */
+  private async reindexAfterImport(
+    collectionId: string,
+    imported: number,
+    requestedSelection: EmbeddingSelection,
+  ): Promise<string[]> {
+    if (imported <= 0) {
+      return [];
+    }
+    const storedSelection = this.knowledgeBase.collectionEmbeddingSelection(collectionId);
+    const selection = requestedSelection.kind === "gemini"
+      ? requestedSelection
+      : storedSelection?.kind === "gemini"
+        ? storedSelection
+        : undefined;
+    if (!selection) {
+      return [];
+    }
+    try {
+      await this.knowledgeBase.reindexCollectionEmbeddings(collectionId, selection);
+      return [];
+    } catch (error) {
+      return [
+        `Imported chunks were stored, but Gemini embedding did not run: ${redactError(error)} ` +
+          "New chunks remain lexical-only until re-embedded (set GEMINI_API_KEY and re-import, or run with the same collection once the key is available).",
+      ];
+    }
+  }
+
   private defaultVideoCollectionId(input: VideoKnowledgeBaseInput): string {
     if (input.collectionId) {
       return input.collectionId;
     }
     const fingerprint = input.videoIdsOrUrls
       .slice(0, 50)
-      .map((item) => this.requireVideoId(item))
+      .map((item) => {
+        // Platform-aware identity: YouTube uses the 11-char video ID, everything
+        // else (TikTok/X/Instagram/generic) uses its canonical assetKey/slug.
+        try {
+          const source = resolveVideoSource(item);
+          return source.platform === "youtube" ? source.sourceId : source.assetKey;
+        } catch {
+          return item;
+        }
+      })
       .join("-")
       .slice(0, 48);
     const base = (input.label ?? "videos")
@@ -3975,13 +4197,16 @@ export class YouTubeService {
   }
 
   private sampleChannelVideos(channelId: string): VideoRecord[] {
+    // Relative dates so lookback-window filters (recommendUploadWindows etc.) never
+    // age the fixtures out of range.
+    const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
     return [
       {
         videoId: "dryrun00001",
         title: "Hook patterns that convert",
         channelId,
         channelTitle: "Dry-run channel",
-        publishedAt: "2026-03-09T08:00:00.000Z",
+        publishedAt: daysAgo(9),
         durationSec: 45,
         views: 42000,
         likes: 2600,
@@ -3994,7 +4219,7 @@ export class YouTubeService {
         title: "Title research workflow",
         channelId,
         channelTitle: "Dry-run channel",
-        publishedAt: "2026-03-05T08:00:00.000Z",
+        publishedAt: daysAgo(13),
         durationSec: 720,
         views: 18000,
         likes: 920,
@@ -4007,7 +4232,7 @@ export class YouTubeService {
         title: "Audience sentiment breakdown",
         channelId,
         channelTitle: "Dry-run channel",
-        publishedAt: "2026-02-25T08:00:00.000Z",
+        publishedAt: daysAgo(33),
         durationSec: 510,
         views: 22000,
         likes: 1100,
@@ -4139,6 +4364,54 @@ export class YouTubeService {
         { name: "storage", status: "ok", detail: `Dry-run data directory available (${this.knowledgeBase.dataDir}).` },
       ],
       suggestions: [],
+      provenance: this.makeProvenance("none", false, ["Dry-run mode enabled. No external calls were made."]),
+    };
+  }
+
+  private sampleRecallWorkspace(): RecallWorkspaceOutput {
+    return {
+      hint:
+        "These collections and media assets persist on disk across sessions. Search or read them (searchTranscripts, readTranscript, searchComments, searchVisualContent, listMediaAssets) instead of re-importing — re-importing wastes time and API quota.",
+      dataDir: this.knowledgeBase.dataDir,
+      transcriptCollections: {
+        count: 1,
+        activeCollectionId: "dry-run-collection",
+        items: [
+          {
+            collectionId: "dry-run-collection",
+            label: "Dry-run sample collection",
+            videoCount: 3,
+            chunkCount: 42,
+            embedding: "local",
+            lastUpdatedAt: new Date(0).toISOString(),
+            isActive: true,
+          },
+        ],
+      },
+      commentCollections: {
+        count: 1,
+        activeCollectionId: undefined,
+        items: [
+          {
+            collectionId: "dry-run-comments",
+            label: "Dry-run sample comments",
+            videoCount: 2,
+            commentChunkCount: 18,
+            lastUpdatedAt: new Date(0).toISOString(),
+            isActive: false,
+          },
+        ],
+      },
+      mediaStore: {
+        totalAssets: 4,
+        totalSizeBytes: 12_582_912,
+        videoCount: 2,
+        byKind: { video: 2, audio: 1, thumbnail: 1 },
+      },
+      visualIndex: {
+        indexedVideoCount: 1,
+        totalFrames: 12,
+      },
       provenance: this.makeProvenance("none", false, ["Dry-run mode enabled. No external calls were made."]),
     };
   }
@@ -4321,10 +4594,13 @@ function isNumber(value: number | undefined): value is number {
 }
 
 function toMessage(error: unknown): string {
-  if (error instanceof ToolExecutionError) {
-    return error.detail.message;
-  }
-  return error instanceof Error ? error.message : String(error);
+  const raw = error instanceof ToolExecutionError
+    ? error.detail.message
+    : error instanceof Error
+      ? error.message
+      : String(error);
+  // Redact secrets/cookie paths before any error text reaches user-facing output.
+  return redactSecrets(raw);
 }
 
 function topStrings(values: string[], limit: number): string[] {
@@ -4502,6 +4778,24 @@ function formatViewCount(views: number): string {
 
 type ExploreResult = ExploreYouTubeOutput["results"][number];
 
+function summarizeEnrichmentJobs(jobs: EnrichmentJob[]): NonNullable<ExploreYouTubeOutput["backgroundEnrichment"]> {
+  const status: "preparing" | "done" | "failed" = jobs.some((job) => job.status === "preparing")
+    ? "preparing"
+    : jobs.some((job) => job.status === "failed")
+      ? "failed"
+      : "done";
+  const errors = jobs
+    .filter((job) => job.error)
+    .map((job) => `${job.asset}: ${job.error}`);
+  return {
+    status,
+    videosQueued: [...new Set(jobs.flatMap((job) => job.videoIds))],
+    assetsBeingPrepared: jobs.map((job) => job.asset),
+    error: errors.length > 0 ? errors.join("; ") : undefined,
+    updatedAt: new Date(Math.max(...jobs.map((job) => job.updatedAt))).toISOString(),
+  };
+}
+
 function buildExploreHints(
   results: ExploreResult[],
   background?: ExploreYouTubeOutput["backgroundEnrichment"],
@@ -4528,13 +4822,27 @@ function buildExploreHints(
     }
   }
 
-  // Background enrichment hints
+  // Background enrichment hints — reflect the real job status (WS4-4).
   if (background) {
+    const preparing = background.status === "preparing";
+    const failed = background.status === "failed";
     if (background.assetsBeingPrepared.includes("transcript_search")) {
-      hints.push("Transcript search is being prepared in the background — use searchTranscripts for follow-up questions.");
+      hints.push(
+        failed
+          ? "Background transcript preparation reported an error — searchTranscripts may be incomplete; retry importVideos if needed."
+          : preparing
+            ? "Transcript search is being prepared in the background — use searchTranscripts for follow-up questions."
+            : "Transcript search is ready — use searchTranscripts for follow-up questions.",
+      );
     }
     if (background.assetsBeingPrepared.includes("visual_search")) {
-      hints.push("Visual search is being prepared — use searchVisualContent to find specific frames, charts, or slides.");
+      hints.push(
+        failed
+          ? "Background visual indexing reported an error — searchVisualContent may be incomplete; retry indexVisualContent if needed."
+          : preparing
+            ? "Visual search is being prepared — use searchVisualContent to find specific frames, charts, or slides."
+            : "Visual search is ready — use searchVisualContent to find specific frames, charts, or slides.",
+      );
     }
   }
 

@@ -1,8 +1,10 @@
-import { existsSync, readFileSync } from "node:fs";
-import { basename } from "node:path";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { execa } from "execa";
 import { commandOnPath } from "../install-diagnostics.js";
-import { chunkAudioForStt, offsetTranscript, stitchTranscripts } from "./chunker.js";
+import { chunkAudioForStt, cleanupChunks, offsetTranscript, stitchTranscripts } from "./chunker.js";
 import type { SttProvider, SttTranscribeOptions, SttTranscriptionResult } from "./types.js";
 import type { TranscriptRecord, TranscriptSegment } from "../types.js";
 import { reportProgress } from "../progress.js";
@@ -13,47 +15,72 @@ export class WhisperCppProvider implements SttProvider {
   constructor(
     private readonly binary: string,
     private readonly modelPath: string,
+    private readonly ffmpegBinary = "ffmpeg",
   ) {}
 
   async transcribe(audioPath: string, options: SttTranscribeOptions = {}): Promise<SttTranscriptionResult> {
     const chunks = await chunkAudioForStt(audioPath);
-    const transcripts: TranscriptRecord[] = [];
-    for (let index = 0; index < chunks.length; index += 1) {
-      const chunk = chunks[index]!;
+    try {
+      const transcripts: TranscriptRecord[] = [];
+      for (let index = 0; index < chunks.length; index += 1) {
+        const chunk = chunks[index]!;
+        await reportProgress(options.progressReporter, {
+          phase: "stt",
+          current: index,
+          total: chunks.length,
+          message: `Transcribing chunk ${index + 1}/${chunks.length}`,
+        });
+        const transcript = await this.transcribeOne(chunk.path, options.videoId ?? basename(audioPath), options.languageHint);
+        transcripts.push(offsetTranscript(transcript, chunk.startSec));
+      }
       await reportProgress(options.progressReporter, {
         phase: "stt",
-        current: index,
+        current: chunks.length,
         total: chunks.length,
-        message: `Transcribing chunk ${index + 1}/${chunks.length}`,
+        message: "Transcription complete",
       });
-      const transcript = await this.transcribeOne(chunk.path, options.videoId ?? basename(audioPath), options.languageHint);
-      transcripts.push(offsetTranscript(transcript, chunk.startSec));
+      return {
+        transcript: stitchTranscripts(options.videoId ?? basename(audioPath), transcripts),
+        chunksProcessed: chunks.length,
+        totalChunks: chunks.length,
+      };
+    } finally {
+      cleanupChunks(chunks, audioPath);
     }
-    await reportProgress(options.progressReporter, {
-      phase: "stt",
-      current: chunks.length,
-      total: chunks.length,
-      message: "Transcription complete",
-    });
-    return {
-      transcript: stitchTranscripts(options.videoId ?? basename(audioPath), transcripts),
-      chunksProcessed: chunks.length,
-      totalChunks: chunks.length,
-    };
   }
 
   private async transcribeOne(path: string, videoId: string, languageHint?: string): Promise<TranscriptRecord> {
-    const args = [
-      "-m", this.modelPath,
-      "-f", path,
-      "-oj",
-      "-np",
-    ];
-    if (languageHint) {
-      args.push("-l", languageHint);
+    // whisper-cli only accepts flac/mp3/ogg/wav, but the pipeline feeds m4a; convert
+    // each chunk to 16 kHz mono WAV first. `-of <base> -oj` writes JSON to `<base>.json`
+    // (stdout is bracketed human text, not JSON), so read the sidecar and clean both up.
+    const base = join(tmpdir(), `vidlens-whisper-${randomUUID()}`);
+    const wavPath = `${base}.wav`;
+    const jsonPath = `${base}.json`;
+    try {
+      await execa(this.ffmpegBinary, [
+        "-y",
+        "-i", path,
+        "-vn",
+        "-ac", "1",
+        "-ar", "16000",
+        wavPath,
+      ], { timeout: 120_000 });
+      const args = [
+        "-m", this.modelPath,
+        "-f", wavPath,
+        "-oj",
+        "-of", base,
+        "-np",
+      ];
+      if (languageHint) {
+        args.push("-l", languageHint);
+      }
+      await execa(this.binary, args, { timeout: 600_000 });
+      return parseWhisperJsonFile(jsonPath, videoId, languageHint);
+    } finally {
+      rmSync(wavPath, { force: true });
+      rmSync(jsonPath, { force: true });
     }
-    const { stdout } = await execa(this.binary, args, { timeout: 600_000 });
-    return parseWhisperJson(stdout, videoId, languageHint);
   }
 }
 
@@ -96,7 +123,9 @@ function parseTimestamp(value: string | undefined): number | undefined {
   if (!value) {
     return undefined;
   }
-  const parts = value.split(":").map(Number);
+  // whisper emits SRT-style comma milliseconds ("00:00:00,000"); normalize to a dot
+  // so Number() can parse the seconds component instead of yielding NaN.
+  const parts = value.replace(",", ".").split(":").map(Number);
   if (parts.some((part) => !Number.isFinite(part))) {
     return undefined;
   }

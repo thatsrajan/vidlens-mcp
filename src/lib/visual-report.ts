@@ -49,7 +49,12 @@ function youtubeTimestampUrl(videoId: string, sec: number): string {
   return `https://youtu.be/${videoId}?t=${Math.floor(sec)}`;
 }
 
-function frameTargetUrl(frame: VisualReportFrame): string {
+/**
+ * Resolve the link target for a frame. Only http(s) URLs are allowed — a stored `javascript:`
+ * or `data:` sourceVideoUrl (settable via indexVisualContent) must never reach an <a href>.
+ * Returns undefined when there is no safe link (the caller renders the frame without an anchor).
+ */
+function frameTargetUrl(frame: VisualReportFrame): string | undefined {
   const sourceUrl = frame.sourceVideoUrl?.trim();
   const seconds = Math.max(0, Math.floor(frame.timestampSec));
   if (!sourceUrl) {
@@ -58,6 +63,9 @@ function frameTargetUrl(frame: VisualReportFrame): string {
 
   try {
     const url = new URL(sourceUrl);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return undefined; // drop unsafe schemes (javascript:, data:, file:, …)
+    }
     const host = url.hostname.toLowerCase().replace(/^www\./, "");
     if (host === "youtu.be" || host.endsWith("youtube.com")) {
       url.searchParams.set("t", String(seconds));
@@ -67,9 +75,9 @@ function frameTargetUrl(frame: VisualReportFrame): string {
       url.searchParams.set("t", `${seconds}s`);
       return url.toString();
     }
-    return sourceUrl;
+    return url.toString();
   } catch {
-    return sourceUrl || youtubeTimestampUrl(frame.videoId, seconds);
+    return undefined;
   }
 }
 
@@ -130,12 +138,20 @@ export function generateVisualReport(options: VisualReportOptions): { html: stri
       .map(m => `<span class="badge">${escapeHtml(m)}</span>`)
       .join("");
 
+    // Only wrap in an anchor when we have a safe http(s) link; otherwise render inert markup.
+    const linkedImage = targetUrl
+      ? `<a href="${escapeHtml(targetUrl)}" target="_blank" rel="noopener">${imgTag}</a>`
+      : imgTag;
+    const timestampEl = targetUrl
+      ? `<a href="${escapeHtml(targetUrl)}" target="_blank" rel="noopener" class="timestamp">${escapeHtml(ts)}</a>`
+      : `<span class="timestamp">${escapeHtml(ts)}</span>`;
+
     return `
       <div class="card">
         <div class="card-image">
-          <a href="${escapeHtml(targetUrl)}" target="_blank" rel="noopener">${imgTag}</a>
+          ${linkedImage}
           <div class="overlay">
-            <a href="${escapeHtml(targetUrl)}" target="_blank" rel="noopener" class="timestamp">${escapeHtml(ts)}</a>
+            ${timestampEl}
             ${scoreBadge}
           </div>
         </div>
@@ -411,14 +427,24 @@ export function generateVisualReport(options: VisualReportOptions): { html: stri
 
 export async function openInBrowser(filePath: string): Promise<void> {
   try {
-    const { execSync } = await import("node:child_process");
+    const { spawn } = await import("node:child_process");
+    // Pass the path as an argv entry (no shell) so it can't be interpreted as a command.
+    let command: string;
+    let args: string[];
     if (process.platform === "darwin") {
-      execSync(`open "${filePath}"`, { timeout: 5_000 });
+      command = "open";
+      args = [filePath];
     } else if (process.platform === "win32") {
-      execSync(`start "" "${filePath}"`, { timeout: 5_000 });
+      command = "cmd";
+      args = ["/c", "start", "", filePath];
     } else {
-      execSync(`xdg-open "${filePath}"`, { timeout: 5_000 });
+      command = "xdg-open";
+      args = [filePath];
     }
+    const child = spawn(command, args, { stdio: "ignore", detached: false });
+    child.on("error", () => {
+      // Silently fail — user can open manually
+    });
   } catch {
     // Silently fail — user can open manually
   }

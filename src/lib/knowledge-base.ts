@@ -12,6 +12,25 @@ import {
   type EmbeddingSelection,
 } from "./embedding-provider.js";
 import { buildVideoUrl } from "./id-parsing.js";
+import { KNOWLEDGE_BASE_MIGRATIONS, runMigrations } from "./schema-migration.js";
+import {
+  buildIdfMap,
+  buildLocalProvenance,
+  buildNormalizedVector,
+  buildSimilarityMatrix,
+  buildTermCounts,
+  cosineSimilarities,
+  decomposeSimilarity,
+  lexicalSimilarity,
+  magnitudeOf,
+  round,
+  safeParseCounts,
+  safeParseNumberArray,
+  safeParseNumberMap,
+  semanticSimilarities,
+  slugify,
+  vectorNorm,
+} from "./text-math.js";
 import type {
   ClearActiveCollectionOutput,
   CollectionScopeMeta,
@@ -32,12 +51,6 @@ import type {
 } from "./types.js";
 
 const DEFAULT_LOCAL_EMBEDDING_MODEL = "local-lsa-hybrid-v1 (TF-IDF + latent semantic projection, no external model)";
-const STOP_WORDS = new Set([
-  "a", "an", "and", "are", "as", "at", "be", "been", "but", "by", "for", "from", "had", "has", "have",
-  "how", "if", "in", "into", "is", "it", "its", "just", "more", "most", "not", "of", "on", "or", "our",
-  "that", "the", "their", "there", "these", "they", "this", "those", "to", "too", "was", "we", "were",
-  "what", "when", "where", "which", "who", "why", "will", "with", "you", "your",
-]);
 
 interface KnowledgeBaseConfig {
   dataDir?: string;
@@ -165,6 +178,7 @@ export class TranscriptKnowledgeBase {
         terms_json TEXT NOT NULL,
         doc_norm REAL,
         embedding_json TEXT,
+        chunk_type TEXT NOT NULL DEFAULT 'transcript',
         FOREIGN KEY (collection_id) REFERENCES collections(collection_id) ON DELETE CASCADE
       );
 
@@ -202,12 +216,47 @@ export class TranscriptKnowledgeBase {
     for (const row of rows) {
       updateCanonical.run(buildVideoUrl(row.video_id), row.collection_id, row.video_id);
     }
+    // Apply versioned migrations after the base schema exists. Migrations are
+    // guarded/idempotent (see schema-migration.ts) so this is safe on fresh DBs
+    // (tables just created above, chunk_type already present) and legacy DBs
+    // (chunk_type added by migration v2, PRAGMA user_version advanced).
+    runMigrations(this.db, "knowledge-base.sqlite", KNOWLEDGE_BASE_MIGRATIONS);
 	  }
 
   private addColumnIfMissing(table: string, column: string, definition: string): void {
     const rows = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
     if (!rows.some((row) => row.name === column)) {
       this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
+  }
+
+  private inTransaction = false;
+
+  /**
+   * Run `fn` inside a single SQLite transaction. Reentrant: if a transaction is
+   * already open (e.g. deleteVideo called from within persistItems), the body
+   * runs inline under the existing transaction rather than issuing a nested
+   * BEGIN (which SQLite rejects).
+   */
+  private runInTransaction<T>(fn: () => T): T {
+    if (this.inTransaction) {
+      return fn();
+    }
+    this.inTransaction = true;
+    this.db.exec("BEGIN");
+    try {
+      const result = fn();
+      this.db.exec("COMMIT");
+      return result;
+    } catch (error) {
+      try {
+        this.db.exec("ROLLBACK");
+      } catch {
+        // Rollback may fail if the transaction was already aborted; ignore.
+      }
+      throw error;
+    } finally {
+      this.inTransaction = false;
     }
   }
 
@@ -260,8 +309,10 @@ export class TranscriptKnowledgeBase {
   }
 
   deleteVideo(collectionId: string, videoId: string): void {
-    this.db.prepare("DELETE FROM transcript_chunks WHERE collection_id = ? AND video_id = ?").run(collectionId, videoId);
-    this.db.prepare("DELETE FROM collection_videos WHERE collection_id = ? AND video_id = ?").run(collectionId, videoId);
+    this.runInTransaction(() => {
+      this.db.prepare("DELETE FROM transcript_chunks WHERE collection_id = ? AND video_id = ?").run(collectionId, videoId);
+      this.db.prepare("DELETE FROM collection_videos WHERE collection_id = ? AND video_id = ?").run(collectionId, videoId);
+    });
   }
 
   importPlaylist(
@@ -412,10 +463,14 @@ export class TranscriptKnowledgeBase {
     const videoRow = this.db
       .prepare("SELECT COUNT(*) AS count FROM collection_videos WHERE collection_id = ?")
       .get(collectionId) as { count: number } | undefined;
-    this.db.prepare("DELETE FROM collections WHERE collection_id = ?").run(collectionId);
-    if (wasActive) {
-      this.deleteAppState("active_collection_id");
-    }
+    this.runInTransaction(() => {
+      // ON DELETE CASCADE clears collection_videos, transcript_chunks and
+      // collection_models; do it and the active-state clear atomically.
+      this.db.prepare("DELETE FROM collections WHERE collection_id = ?").run(collectionId);
+      if (wasActive) {
+        this.deleteAppState("active_collection_id");
+      }
+    });
 
     return {
       removed: true,
@@ -439,13 +494,28 @@ export class TranscriptKnowledgeBase {
       return;
     }
 
+    const targetAlgorithm = selectionToAlgorithm(selection);
+    // When the collection is already on this exact Gemini model, only chunks
+    // that lack an embedding (freshly imported) need to be embedded — never
+    // re-embed the whole collection (that was the paid-cost bug). When the
+    // stored algorithm differs (e.g. converting a local collection to Gemini),
+    // every chunk must be re-embedded.
+    const alreadyOnTarget = model.algorithm === targetAlgorithm;
+    const rowsToEmbed = alreadyOnTarget
+      ? rows.filter((row) => safeParseNumberArray(row.embeddingJson).length === 0)
+      : rows;
+
+    if (rowsToEmbed.length === 0) {
+      return;
+    }
+
     const provider = await createEmbeddingProvider(selection);
     if (!provider) {
       return;
     }
-    const embeddings = await provider.embedDocuments(rows.map((row) => row.text));
-    if (embeddings.length !== rows.length) {
-      throw new Error(`Embedding provider returned ${embeddings.length} vectors for ${rows.length} chunks.`);
+    const embeddings = await provider.embedDocuments(rowsToEmbed.map((row) => row.text));
+    if (embeddings.length !== rowsToEmbed.length) {
+      throw new Error(`Embedding provider returned ${embeddings.length} vectors for ${rowsToEmbed.length} chunks.`);
     }
 
     const updateChunk = this.db.prepare(`
@@ -454,27 +524,34 @@ export class TranscriptKnowledgeBase {
       WHERE chunk_id = ?
     `);
 
-    this.db.exec("BEGIN");
-    try {
-      rows.forEach((row, index) => {
+    this.runInTransaction(() => {
+      rowsToEmbed.forEach((row, index) => {
         const embedding = embeddings[index] ?? [];
         updateChunk.run(magnitudeOf(embedding) || 1, JSON.stringify(embedding), row.chunkId);
       });
       this.db.prepare(`
         UPDATE collection_models
-        SET algorithm = ?, sigma_json = ?, built_at = ?
+        SET algorithm = ?, sigma_json = ?, chunk_count = ?, built_at = ?
         WHERE collection_id = ?
       `).run(
-        selectionToAlgorithm(selection),
+        targetAlgorithm,
         JSON.stringify([]),
+        rows.length,
         new Date().toISOString(),
         collectionId,
       );
-      this.db.exec("COMMIT");
-    } catch (error) {
-      this.db.exec("ROLLBACK");
-      throw error;
-    }
+    });
+  }
+
+  /**
+   * The embedding algorithm a collection is currently stored under, or null if
+   * the collection has no model yet. Lets callers decide whether a Gemini
+   * reindex is required (a Gemini collection must never be silently downgraded
+   * to local — see persistItems).
+   */
+  collectionEmbeddingSelection(collectionId: string): EmbeddingSelection | null {
+    const model = this.loadModel(collectionId);
+    return model ? parseAlgorithmSelection(model.algorithm) : null;
   }
 
   async search(input: SearchTranscriptsInput): Promise<SearchTranscriptsOutput> {
@@ -592,8 +669,13 @@ export class TranscriptKnowledgeBase {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    this.db.exec("BEGIN");
-    try {
+    // Capture the algorithm the collection is stored under BEFORE this import so
+    // we never silently downgrade a Gemini collection to local (WS2-1). This is
+    // read before any writes; deleteVideo below leaves collection_models intact.
+    const priorAlgorithm = this.loadModel(collectionId)?.algorithm;
+    const priorSelection = priorAlgorithm ? parseAlgorithmSelection(priorAlgorithm) : null;
+
+    this.runInTransaction(() => {
       for (const item of items) {
         try {
           this.deleteVideo(collectionId, item.video.videoId);
@@ -645,13 +727,19 @@ export class TranscriptKnowledgeBase {
           });
         }
       }
-      this.db.exec("COMMIT");
-    } catch (error) {
-      this.db.exec("ROLLBACK");
-      throw error;
-    }
+    });
     if (imported > 0) {
-      this.rebuildCollectionModel(collectionId);
+      if (priorSelection?.kind === "gemini") {
+        // Gemini collection: preserve the existing paid embeddings and keep the
+        // stored algorithm. Only refresh the lexical (idf) model over all chunks;
+        // freshly imported chunks stay unembedded until a Gemini reindex runs
+        // (the caller triggers it via reindexCollectionEmbeddings, which now
+        // embeds only the new chunks). We never overwrite existing embeddings
+        // with local LSA vectors.
+        this.rebuildLexicalModel(collectionId, priorAlgorithm!);
+      } else {
+        this.rebuildCollectionModel(collectionId);
+      }
       this.touchCollection(collectionId);
     }
 
@@ -699,29 +787,58 @@ export class TranscriptKnowledgeBase {
       WHERE chunk_id = ?
     `);
 
-    this.db.exec("BEGIN");
-    try {
+    // Chunk embeddings and the model metadata (idf/sigma) must land together, or
+    // a crash between them leaves the stored idf inconsistent with the vectors
+    // and silently wrong search rankings (WS2-3).
+    this.runInTransaction(() => {
       normalizedDocs.forEach((item, index) => {
         const embedding = decomposition.embeddings[index] ?? [];
         updateChunk.run(item.norm, JSON.stringify(embedding), item.row.chunkId);
       });
-      this.db.exec("COMMIT");
-    } catch (error) {
-      this.db.exec("ROLLBACK");
-      throw error;
+      this.db.prepare(`
+        INSERT OR REPLACE INTO collection_models (collection_id, algorithm, chunk_count, sigma_json, idf_json, built_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        collectionId,
+        selectionToAlgorithm({ kind: "local" }),
+        normalizedDocs.length,
+        JSON.stringify(decomposition.sigma),
+        JSON.stringify(idf),
+        new Date().toISOString(),
+      );
+    });
+  }
+
+  /**
+   * Refresh only the lexical (TF-IDF) model for a collection while preserving
+   * the stored algorithm and every chunk's existing embedding. Used for
+   * incremental imports into a Gemini collection: the local LSA rebuild would
+   * overwrite the paid Gemini vectors, so we recompute idf over all chunks (so
+   * lexical scoring stays fresh) but leave embeddings untouched. Newly imported
+   * chunks keep their null embedding until the caller runs a Gemini reindex.
+   */
+  private rebuildLexicalModel(collectionId: string, algorithm: string): void {
+    const rows = this.loadSearchRows(collectionId);
+    if (rows.length === 0) {
+      this.db.prepare("DELETE FROM collection_models WHERE collection_id = ?").run(collectionId);
+      return;
     }
 
-    this.db.prepare(`
-      INSERT OR REPLACE INTO collection_models (collection_id, algorithm, chunk_count, sigma_json, idf_json, built_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(
-      collectionId,
-      selectionToAlgorithm({ kind: "local" }),
-      normalizedDocs.length,
-      JSON.stringify(decomposition.sigma),
-      JSON.stringify(idf),
-      new Date().toISOString(),
-    );
+    const idf = buildIdfMap(rows.map((row) => safeParseCounts(row.termsJson)));
+
+    this.runInTransaction(() => {
+      this.db.prepare(`
+        INSERT OR REPLACE INTO collection_models (collection_id, algorithm, chunk_count, sigma_json, idf_json, built_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        collectionId,
+        algorithm,
+        rows.length,
+        JSON.stringify([]),
+        JSON.stringify(idf),
+        new Date().toISOString(),
+      );
+    });
   }
 
   private listCollectionIds(): string[] {
@@ -1000,162 +1117,6 @@ function chunkByWindow(transcript: TranscriptRecord, chunkSizeSec: number, chunk
   return chunks;
 }
 
-function buildTermCounts(text: string): Record<string, number> {
-  const words = tokenize(text);
-  const counts: Record<string, number> = {};
-  for (let index = 0; index < words.length; index += 1) {
-    const word = words[index];
-    counts[word] = (counts[word] ?? 0) + 1;
-    const next = words[index + 1];
-    if (next) {
-      const bigram = `${word}_${next}`;
-      counts[bigram] = (counts[bigram] ?? 0) + 1;
-    }
-  }
-  return counts;
-}
-
-function tokenize(text: string): string[] {
-  const normalized = text
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ");
-
-  return normalized
-    .split(/\s+/)
-    .map((token) => stem(token.trim()))
-    .filter((token) => token.length >= 2 && !STOP_WORDS.has(token));
-}
-
-function stem(token: string): string {
-  let current = token;
-  if (current.endsWith("ies") && current.length > 4) {
-    current = `${current.slice(0, -3)}y`;
-  } else if (current.endsWith("ing") && current.length > 5) {
-    current = current.slice(0, -3);
-  } else if (current.endsWith("ed") && current.length > 4) {
-    current = current.slice(0, -2);
-  } else if (current.endsWith("ly") && current.length > 4) {
-    current = current.slice(0, -2);
-  } else if (current.endsWith("es") && current.length > 4) {
-    current = current.slice(0, -2);
-  } else if (current.endsWith("s") && current.length > 3) {
-    current = current.slice(0, -1);
-  }
-  return current;
-}
-
-function buildIdfMap(documents: Array<Record<string, number>>): Record<string, number> {
-  const docCount = documents.length;
-  const df = new Map<string, number>();
-  for (const document of documents) {
-    for (const token of Object.keys(document)) {
-      df.set(token, (df.get(token) ?? 0) + 1);
-    }
-  }
-
-  const rankedTokens = Array.from(df.entries())
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .slice(0, 4000);
-
-  return Object.fromEntries(
-    rankedTokens.map(([token, frequency]) => [token, 1 + Math.log((docCount + 1) / (frequency + 1))]),
-  );
-}
-
-function buildNormalizedVector(terms: Record<string, number>, idf: Record<string, number>): Record<string, number> {
-  const weighted: Record<string, number> = {};
-  let normSquared = 0;
-  for (const [token, count] of Object.entries(terms)) {
-    const tokenIdf = idf[token];
-    if (!tokenIdf) {
-      continue;
-    }
-    const weight = (1 + Math.log(count)) * tokenIdf;
-    weighted[token] = weight;
-    normSquared += weight * weight;
-  }
-
-  const norm = Math.sqrt(normSquared) || 1;
-  for (const token of Object.keys(weighted)) {
-    weighted[token] = weighted[token] / norm;
-  }
-  return weighted;
-}
-
-function buildSimilarityMatrix(vectors: Array<Record<string, number>>): Float64Array {
-  const size = vectors.length;
-  const matrix = new Float64Array(size * size);
-  const inverted = new Map<string, Array<{ index: number; weight: number }>>();
-
-  vectors.forEach((vector, index) => {
-    for (const [token, weight] of Object.entries(vector)) {
-      const bucket = inverted.get(token) ?? [];
-      bucket.push({ index, weight });
-      inverted.set(token, bucket);
-    }
-  });
-
-  for (const postings of inverted.values()) {
-    for (let left = 0; left < postings.length; left += 1) {
-      const a = postings[left];
-      for (let right = left; right < postings.length; right += 1) {
-        const b = postings[right];
-        const contribution = a.weight * b.weight;
-        matrix[a.index * size + b.index] += contribution;
-        if (a.index !== b.index) {
-          matrix[b.index * size + a.index] += contribution;
-        }
-      }
-    }
-  }
-
-  return matrix;
-}
-
-function decomposeSimilarity(matrix: Float64Array, size: number): { sigma: number[]; embeddings: number[][] } {
-  const sigma: number[] = [];
-  const eigenvectors: number[][] = [];
-  const maxComponents = Math.min(size, 12);
-
-  for (let component = 0; component < maxComponents; component += 1) {
-    let vector = Array.from({ length: size }, (_, index) => ((index + 1) * (component + 3)) % 7 + 1);
-    vector = normalizeDense(vector);
-
-    for (let iteration = 0; iteration < 20; iteration += 1) {
-      let multiplied = multiplyMatrixVector(matrix, size, vector);
-      for (const previous of eigenvectors) {
-        const projection = dot(previous, multiplied);
-        multiplied = multiplied.map((value, index) => value - projection * previous[index]);
-      }
-      const magnitude = magnitudeOf(multiplied);
-      if (magnitude < 1e-9) {
-        break;
-      }
-      vector = multiplied.map((value) => value / magnitude);
-    }
-
-    const projected = multiplyMatrixVector(matrix, size, vector);
-    const eigenvalue = dot(vector, projected);
-    if (!Number.isFinite(eigenvalue) || eigenvalue <= 1e-8) {
-      break;
-    }
-
-    sigma.push(Math.sqrt(eigenvalue));
-    eigenvectors.push(vector);
-  }
-
-  const embeddings = Array.from({ length: size }, () => Array.from({ length: sigma.length }, () => 0));
-  for (let index = 0; index < size; index += 1) {
-    for (let component = 0; component < sigma.length; component += 1) {
-      embeddings[index][component] = eigenvectors[component][index] * sigma[component];
-    }
-  }
-
-  return { sigma, embeddings };
-}
-
 async function rankCollection(
   rows: SearchRow[],
   model: CollectionModel,
@@ -1186,7 +1147,7 @@ async function rankCollection(
     embedding: safeParseNumberArray(row.embeddingJson),
   }));
 
-  const lexicalScores = chunks.map((chunk) => lexicalSimilarity(chunk.terms, chunk.docNorm, queryVector, queryNorm, model.idf));
+  const lexicalScores = chunks.map((chunk) => lexicalSimilarity(chunk.terms, queryVector, queryNorm, model.idf));
   const selection = parseAlgorithmSelection(model.algorithm);
 
   let semanticScores: Array<number | undefined> = [];
@@ -1197,14 +1158,14 @@ async function rankCollection(
       const provider = await createEmbeddingProvider(selection);
       if (provider) {
         const queryEmbedding = await provider.embedQuery(query);
-        semanticScores = cosineSimilarities(chunks, queryEmbedding);
+        semanticScores = cosineSimilarities(chunks.map((chunk) => chunk.embedding), queryEmbedding);
       }
     } catch {
       semanticFallback = true;
     }
   } else {
     const hasEmbedding = model.sigma.length > 0 && chunks.some((chunk) => chunk.embedding.length > 0);
-    semanticScores = hasEmbedding ? semanticSimilarities(chunks, lexicalScores, model.sigma) : [];
+    semanticScores = hasEmbedding ? semanticSimilarities(chunks.map((chunk) => chunk.embedding), lexicalScores, model.sigma) : [];
   }
 
   return {
@@ -1225,66 +1186,6 @@ async function rankCollection(
       })
       .sort((a, b) => b.score - a.score || b.lexicalScore - a.lexicalScore || a.ordinal - b.ordinal),
   };
-}
-
-function lexicalSimilarity(
-  docTerms: Record<string, number>,
-  _docNorm: number,
-  queryVector: Record<string, number>,
-  queryNorm: number,
-  idf: Record<string, number>,
-): number {
-  if (queryNorm <= 0) {
-    return 0;
-  }
-  let dotProduct = 0;
-  let docNormSquared = 0;
-  for (const [token, count] of Object.entries(docTerms)) {
-    const tokenIdf = idf[token];
-    if (!tokenIdf) {
-      continue;
-    }
-    const docWeight = (1 + Math.log(count)) * tokenIdf;
-    docNormSquared += docWeight * docWeight;
-    if (queryVector[token]) {
-      dotProduct += docWeight * queryVector[token];
-    }
-  }
-
-  const docNorm = Math.sqrt(docNormSquared) || 1;
-  return dotProduct / (docNorm * Math.max(queryNorm, 1));
-}
-
-function semanticSimilarities(chunks: StoredChunk[], lexicalScores: number[], sigma: number[]): Array<number | undefined> {
-  const queryEmbedding = Array.from({ length: sigma.length }, () => 0);
-  for (let index = 0; index < chunks.length; index += 1) {
-    const lexicalScore = lexicalScores[index] ?? 0;
-    if (lexicalScore <= 0) {
-      continue;
-    }
-    const embedding = chunks[index].embedding;
-    for (let component = 0; component < sigma.length; component += 1) {
-      const divisor = sigma[component] ** 2 || 1;
-      queryEmbedding[component] += lexicalScore * ((embedding[component] ?? 0) / divisor);
-    }
-  }
-
-  return cosineSimilarities(chunks, queryEmbedding);
-}
-
-function cosineSimilarities(chunks: StoredChunk[], queryEmbedding: number[]): Array<number | undefined> {
-  const queryMagnitude = magnitudeOf(queryEmbedding);
-  if (queryMagnitude <= 1e-9) {
-    return chunks.map(() => undefined);
-  }
-
-  return chunks.map((chunk) => {
-    const magnitude = magnitudeOf(chunk.embedding);
-    if (magnitude <= 1e-9) {
-      return undefined;
-    }
-    return dot(queryEmbedding, chunk.embedding) / (queryMagnitude * magnitude);
-  });
 }
 
 function buildTimestampUrl(videoId: string, tStartSec: number, sourcePlatform?: string, canonicalUrl?: string): string {
@@ -1319,13 +1220,7 @@ function humanizeAlgorithm(algorithm: string): string {
 }
 
 function localProvenance(): Provenance {
-  return {
-    sourceTier: "none",
-    fetchedAt: new Date().toISOString(),
-    fallbackDepth: 3,
-    partial: false,
-    sourceNotes: ["Query served from the local transcript knowledge base."],
-  };
+  return buildLocalProvenance("Query served from the local transcript knowledge base.");
 }
 
 function groupChunkContexts(rows: SearchRow[]): Map<string, Map<number, SearchRow>> {
@@ -1336,87 +1231,6 @@ function groupChunkContexts(rows: SearchRow[]): Map<string, Map<number, SearchRo
     grouped.set(row.videoId, map);
   }
   return grouped;
-}
-
-function safeParseCounts(value: string): Record<string, number> {
-  try {
-    const parsed = JSON.parse(value) as Record<string, number>;
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function safeParseNumberMap(value: string): Record<string, number> {
-  try {
-    const parsed = JSON.parse(value) as Record<string, number>;
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function safeParseNumberArray(value: string | null | undefined): number[] {
-  if (!value) {
-    return [];
-  }
-  try {
-    const parsed = JSON.parse(value) as number[];
-    return Array.isArray(parsed) ? parsed.map((item) => Number(item) || 0) : [];
-  } catch {
-    return [];
-  }
-}
-
-function vectorNorm(vector: Record<string, number>): number {
-  return Math.sqrt(Object.values(vector).reduce((sum, value) => sum + value * value, 0));
-}
-
-function multiplyMatrixVector(matrix: Float64Array, size: number, vector: number[]): number[] {
-  const result = new Array<number>(size).fill(0);
-  for (let row = 0; row < size; row += 1) {
-    let total = 0;
-    const offset = row * size;
-    for (let column = 0; column < size; column += 1) {
-      total += matrix[offset + column] * vector[column];
-    }
-    result[row] = total;
-  }
-  return result;
-}
-
-function normalizeDense(values: number[]): number[] {
-  const magnitude = magnitudeOf(values);
-  if (magnitude <= 1e-9) {
-    return values;
-  }
-  return values.map((value) => value / magnitude);
-}
-
-function magnitudeOf(values: number[]): number {
-  return Math.sqrt(values.reduce((sum, value) => sum + (value * value), 0));
-}
-
-function dot(left: number[], right: number[]): number {
-  const size = Math.min(left.length, right.length);
-  let total = 0;
-  for (let index = 0; index < size; index += 1) {
-    total += (left[index] ?? 0) * (right[index] ?? 0);
-  }
-  return total;
-}
-
-function round(value: number, digits = 4): number {
-  const factor = 10 ** digits;
-  return Math.round(value * factor) / factor;
-}
-
-function slugify(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 32) || "collection";
 }
 
 export function resolveCollectionIdForPlaylist(input: PlaylistKnowledgeBaseInput): string {
