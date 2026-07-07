@@ -15,7 +15,8 @@ test("acquire succeeds immediately when tokens available", async () => {
   });
   const waitMs = await limiter.acquire();
   assert.equal(waitMs, 0);
-  assert.equal(limiter.available(), 9);
+  // refill() accrues fractional tokens continuously, so compare whole tokens.
+  assert.equal(Math.floor(limiter.available()), 9);
 });
 
 test("acquire blocks when bucket is empty", async () => {
@@ -55,7 +56,7 @@ test("tokens refill over time", async () => {
 
   // Drain all tokens
   for (let i = 0; i < 5; i++) limiter.tryAcquire();
-  assert.equal(limiter.available(), 0);
+  assert.equal(Math.floor(limiter.available()), 0);
 
   // Wait for a refill interval
   await new Promise((r) => setTimeout(r, 120));
@@ -94,7 +95,7 @@ test("reset restores full capacity", () => {
   });
 
   for (let i = 0; i < 10; i++) limiter.tryAcquire();
-  assert.equal(limiter.available(), 0);
+  assert.equal(Math.floor(limiter.available()), 0);
 
   limiter.reset();
   assert.equal(limiter.available(), 10);
@@ -113,10 +114,10 @@ test("cost parameter deducts correct amount", async () => {
   });
 
   await limiter.acquire(3);
-  assert.equal(limiter.available(), 7);
+  assert.equal(Math.floor(limiter.available()), 7);
 
   assert.equal(limiter.tryAcquire(7), true);
-  assert.equal(limiter.available(), 0);
+  assert.equal(Math.floor(limiter.available()), 0);
 
   assert.equal(limiter.tryAcquire(1), false);
 });
@@ -129,6 +130,37 @@ test("acquire rejects cost exceeding maxTokens", async () => {
   });
 
   await assert.rejects(() => limiter.acquire(10), /exceeds max bucket capacity/);
+});
+
+test("concurrent acquires never over-admit or drive tokens negative", async () => {
+  // 2 tokens per 100ms. Start with a full bucket of 2, then fire 10 acquires at
+  // once: 2 pass immediately, the other 8 must be spaced by the refill rate.
+  const limiter = new RateLimiter({
+    maxTokens: 2,
+    refillRate: 2,
+    refillIntervalMs: 100,
+  });
+
+  const start = Date.now();
+  const waits = await Promise.all(
+    Array.from({ length: 10 }, () => limiter.acquire()),
+  );
+
+  // Never negative at any point: available() must be >= 0 and the bucket
+  // must not have handed out more than it had.
+  assert.ok(limiter.available() >= 0, `available went negative: ${limiter.available()}`);
+
+  // Exactly 2 should have been immediate (wait 0); the rest waited.
+  const immediate = waits.filter((w) => w === 0).length;
+  assert.equal(immediate, 2, `expected 2 immediate admissions, got ${immediate}`);
+
+  // 10 admissions at 2 per 100ms starting from a full bucket of 2 => the last
+  // 8 need ~4 refill intervals (~400ms). Assert real elapsed spacing occurred.
+  const elapsed = Date.now() - start;
+  assert.ok(elapsed >= 300, `expected admissions to be spaced (>=300ms), got ${elapsed}ms`);
+
+  const s = limiter.stats();
+  assert.equal(s.totalAcquired, 10);
 });
 
 test("factory: createYouTubeApiLimiter creates limiter with 50 burst capacity", () => {

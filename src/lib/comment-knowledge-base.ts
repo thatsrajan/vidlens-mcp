@@ -11,6 +11,23 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { buildVideoUrl } from "./id-parsing.js";
+import { KNOWLEDGE_BASE_MIGRATIONS, runMigrations } from "./schema-migration.js";
+import {
+  buildIdfMap,
+  buildLocalProvenance,
+  buildNormalizedVector,
+  buildSimilarityMatrix,
+  buildTermCounts,
+  decomposeSimilarity,
+  lexicalSimilarity,
+  round,
+  safeParseCounts,
+  safeParseNumberArray,
+  safeParseNumberMap,
+  semanticSimilarities,
+  slugify,
+  vectorNorm,
+} from "./text-math.js";
 import type {
   CollectionScopeMeta,
   CommentCollectionSummary,
@@ -27,15 +44,6 @@ import type {
 
 const DEFAULT_LOCAL_EMBEDDING_MODEL =
   "local-lsa-hybrid-v1 (TF-IDF + latent semantic projection, no external model)";
-
-const STOP_WORDS = new Set([
-  "a", "an", "and", "are", "as", "at", "be", "been", "but", "by", "for",
-  "from", "had", "has", "have", "how", "if", "in", "into", "is", "it",
-  "its", "just", "more", "most", "not", "of", "on", "or", "our", "that",
-  "the", "their", "there", "these", "they", "this", "those", "to", "too",
-  "was", "we", "were", "what", "when", "where", "which", "who", "why",
-  "will", "with", "you", "your",
-]);
 
 interface KnowledgeBaseConfig {
   dataDir?: string;
@@ -164,6 +172,38 @@ export class CommentKnowledgeBase {
         updated_at TEXT NOT NULL
       );
     `);
+    // knowledge-base.sqlite is shared with TranscriptKnowledgeBase; run the same
+    // guarded migrations after our base schema exists so PRAGMA user_version is
+    // maintained regardless of which store opens the file first.
+    runMigrations(this.db, "knowledge-base.sqlite", KNOWLEDGE_BASE_MIGRATIONS);
+  }
+
+  private inTransaction = false;
+
+  /**
+   * Run `fn` inside a single SQLite transaction. Reentrant so nested calls
+   * (deleteVideo within importComments) don't issue a nested BEGIN.
+   */
+  private runInTransaction<T>(fn: () => T): T {
+    if (this.inTransaction) {
+      return fn();
+    }
+    this.inTransaction = true;
+    this.db.exec("BEGIN");
+    try {
+      const result = fn();
+      this.db.exec("COMMIT");
+      return result;
+    } catch (error) {
+      try {
+        this.db.exec("ROLLBACK");
+      } catch {
+        // Rollback may fail if the transaction was already aborted; ignore.
+      }
+      throw error;
+    } finally {
+      this.inTransaction = false;
+    }
   }
 
   // ── Collection CRUD ──
@@ -209,16 +249,18 @@ export class CommentKnowledgeBase {
   }
 
   deleteVideo(collectionId: string, videoId: string): void {
-    this.db
-      .prepare(
-        "DELETE FROM comment_chunks WHERE collection_id = ? AND video_id = ?",
-      )
-      .run(collectionId, videoId);
-    this.db
-      .prepare(
-        "DELETE FROM comment_collection_videos WHERE collection_id = ? AND video_id = ?",
-      )
-      .run(collectionId, videoId);
+    this.runInTransaction(() => {
+      this.db
+        .prepare(
+          "DELETE FROM comment_chunks WHERE collection_id = ? AND video_id = ?",
+        )
+        .run(collectionId, videoId);
+      this.db
+        .prepare(
+          "DELETE FROM comment_collection_videos WHERE collection_id = ? AND video_id = ?",
+        )
+        .run(collectionId, videoId);
+    });
   }
 
   // ── Import ──
@@ -246,8 +288,7 @@ export class CommentKnowledgeBase {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    this.db.exec("BEGIN");
-    try {
+    this.runInTransaction(() => {
       for (const item of items) {
         this.deleteVideo(collectionId, item.videoId);
         let videoThreads = 0;
@@ -329,11 +370,7 @@ export class CommentKnowledgeBase {
           now,
         );
       }
-      this.db.exec("COMMIT");
-    } catch (error) {
-      this.db.exec("ROLLBACK");
-      throw error;
-    }
+    });
 
     if (chunksCreated > 0) {
       this.rebuildCollectionModel(collectionId);
@@ -537,12 +574,16 @@ export class CommentKnowledgeBase {
       .get(collectionId) as { count: number } | undefined;
 
     const wasActive = this.getActiveCollectionId() === collectionId;
-    this.db
-      .prepare("DELETE FROM comment_collections WHERE collection_id = ?")
-      .run(collectionId);
-    if (wasActive) {
-      this.deleteAppState("active_comment_collection_id");
-    }
+    this.runInTransaction(() => {
+      // ON DELETE CASCADE clears the child tables; do it and the active-state
+      // clear atomically.
+      this.db
+        .prepare("DELETE FROM comment_collections WHERE collection_id = ?")
+        .run(collectionId);
+      if (wasActive) {
+        this.deleteAppState("active_comment_collection_id");
+      }
+    });
 
     return {
       removed: true,
@@ -610,32 +651,29 @@ export class CommentKnowledgeBase {
       WHERE chunk_id = ?
     `);
 
-    this.db.exec("BEGIN");
-    try {
+    // Chunk embeddings and the model metadata (idf/sigma) must commit together,
+    // or a crash between them leaves the stored idf inconsistent with the
+    // vectors and silently wrong rankings (WS2-3).
+    this.runInTransaction(() => {
       normalizedDocs.forEach((item, index) => {
         const embedding = decomposition.embeddings[index] ?? [];
         updateChunk.run(item.norm, JSON.stringify(embedding), item.row.chunkId);
       });
-      this.db.exec("COMMIT");
-    } catch (error) {
-      this.db.exec("ROLLBACK");
-      throw error;
-    }
-
-    this.db
-      .prepare(
-        `INSERT OR REPLACE INTO comment_collection_models
-         (collection_id, algorithm, chunk_count, sigma_json, idf_json, built_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        collectionId,
-        "local-lsa-hybrid-v1",
-        normalizedDocs.length,
-        JSON.stringify(decomposition.sigma),
-        JSON.stringify(idf),
-        new Date().toISOString(),
-      );
+      this.db
+        .prepare(
+          `INSERT OR REPLACE INTO comment_collection_models
+           (collection_id, algorithm, chunk_count, sigma_json, idf_json, built_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          collectionId,
+          "local-lsa-hybrid-v1",
+          normalizedDocs.length,
+          JSON.stringify(decomposition.sigma),
+          JSON.stringify(idf),
+          new Date().toISOString(),
+        );
+    });
   }
 
   private resolveCollectionScope(
@@ -686,9 +724,8 @@ export class CommentKnowledgeBase {
     collectionId: string,
     videoFilter?: Set<string>,
   ): CommentSearchRow[] {
-    const rows = this.db
-      .prepare(
-        `SELECT
+    const params: string[] = [collectionId];
+    let query = `SELECT
            ch.chunk_id,
            ch.collection_id,
            ch.video_id,
@@ -705,10 +742,18 @@ export class CommentKnowledgeBase {
          FROM comment_chunks ch
          INNER JOIN comment_collection_videos v
            ON v.collection_id = ch.collection_id AND v.video_id = ch.video_id
-         WHERE ch.collection_id = ?
-         ORDER BY ch.video_id ASC, ch.like_count DESC`,
-      )
-      .all(collectionId) as Array<{
+         WHERE ch.collection_id = ?`;
+
+    if (videoFilter && videoFilter.size > 0) {
+      const filteredVideoIds = Array.from(videoFilter);
+      const placeholders = filteredVideoIds.map(() => "?").join(", ");
+      query += ` AND ch.video_id IN (${placeholders})`;
+      params.push(...filteredVideoIds);
+    }
+
+    query += " ORDER BY ch.video_id ASC, ch.like_count DESC";
+
+    const rows = this.db.prepare(query).all(...params) as Array<{
       chunk_id: string;
       collection_id: string;
       video_id: string;
@@ -725,7 +770,6 @@ export class CommentKnowledgeBase {
     }>;
 
     return rows
-      .filter((row) => !videoFilter || videoFilter.has(row.video_id))
       .map((row) => ({
         chunkId: row.chunk_id,
         collectionId: row.collection_id,
@@ -869,7 +913,7 @@ function rankComments(
   const hasEmbedding =
     model.sigma.length > 0 && chunks.some((c) => c.embedding.length > 0);
   const semanticScores: Array<number | undefined> = hasEmbedding
-    ? semanticSimilarities(chunks, lexicalScores, model.sigma)
+    ? semanticSimilarities(chunks.map((chunk) => chunk.embedding), lexicalScores, model.sigma)
     : [];
 
   // Boost high-like comments slightly
@@ -899,307 +943,8 @@ function rankComments(
 
 // ── NLP Utilities (shared with transcript KB) ──
 
-function buildTermCounts(text: string): Record<string, number> {
-  const words = tokenize(text);
-  const counts: Record<string, number> = {};
-  for (let i = 0; i < words.length; i += 1) {
-    const word = words[i];
-    counts[word] = (counts[word] ?? 0) + 1;
-    const next = words[i + 1];
-    if (next) {
-      const bigram = `${word}_${next}`;
-      counts[bigram] = (counts[bigram] ?? 0) + 1;
-    }
-  }
-  return counts;
-}
-
-function tokenize(text: string): string[] {
-  const normalized = text
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ");
-  return normalized
-    .split(/\s+/)
-    .map((t) => stem(t.trim()))
-    .filter((t) => t.length >= 2 && !STOP_WORDS.has(t));
-}
-
-function stem(token: string): string {
-  let c = token;
-  if (c.endsWith("ies") && c.length > 4) c = `${c.slice(0, -3)}y`;
-  else if (c.endsWith("ing") && c.length > 5) c = c.slice(0, -3);
-  else if (c.endsWith("ed") && c.length > 4) c = c.slice(0, -2);
-  else if (c.endsWith("ly") && c.length > 4) c = c.slice(0, -2);
-  else if (c.endsWith("es") && c.length > 4) c = c.slice(0, -2);
-  else if (c.endsWith("s") && c.length > 3) c = c.slice(0, -1);
-  return c;
-}
-
-function buildIdfMap(
-  documents: Array<Record<string, number>>,
-): Record<string, number> {
-  const docCount = documents.length;
-  const df = new Map<string, number>();
-  for (const doc of documents) {
-    for (const token of Object.keys(doc)) {
-      df.set(token, (df.get(token) ?? 0) + 1);
-    }
-  }
-  const rankedTokens = Array.from(df.entries())
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .slice(0, 4000);
-  return Object.fromEntries(
-    rankedTokens.map(([token, freq]) => [
-      token,
-      1 + Math.log((docCount + 1) / (freq + 1)),
-    ]),
-  );
-}
-
-function buildNormalizedVector(
-  terms: Record<string, number>,
-  idf: Record<string, number>,
-): Record<string, number> {
-  const weighted: Record<string, number> = {};
-  let normSquared = 0;
-  for (const [token, count] of Object.entries(terms)) {
-    const tokenIdf = idf[token];
-    if (!tokenIdf) continue;
-    const weight = (1 + Math.log(count)) * tokenIdf;
-    weighted[token] = weight;
-    normSquared += weight * weight;
-  }
-  const norm = Math.sqrt(normSquared) || 1;
-  for (const token of Object.keys(weighted)) {
-    weighted[token] = weighted[token] / norm;
-  }
-  return weighted;
-}
-
-function buildSimilarityMatrix(
-  vectors: Array<Record<string, number>>,
-): Float64Array {
-  const size = vectors.length;
-  const matrix = new Float64Array(size * size);
-  const inverted = new Map<
-    string,
-    Array<{ index: number; weight: number }>
-  >();
-  vectors.forEach((vector, index) => {
-    for (const [token, weight] of Object.entries(vector)) {
-      const bucket = inverted.get(token) ?? [];
-      bucket.push({ index, weight });
-      inverted.set(token, bucket);
-    }
-  });
-  for (const postings of inverted.values()) {
-    for (let left = 0; left < postings.length; left += 1) {
-      const a = postings[left];
-      for (let right = left; right < postings.length; right += 1) {
-        const b = postings[right];
-        const contribution = a.weight * b.weight;
-        matrix[a.index * size + b.index] += contribution;
-        if (a.index !== b.index) {
-          matrix[b.index * size + a.index] += contribution;
-        }
-      }
-    }
-  }
-  return matrix;
-}
-
-function decomposeSimilarity(
-  matrix: Float64Array,
-  size: number,
-): { sigma: number[]; embeddings: number[][] } {
-  const sigma: number[] = [];
-  const eigenvectors: number[][] = [];
-  const maxComponents = Math.min(size, 12);
-  for (let comp = 0; comp < maxComponents; comp += 1) {
-    let vector = Array.from(
-      { length: size },
-      (_, i) => ((i + 1) * (comp + 3)) % 7 + 1,
-    );
-    vector = normalizeDense(vector);
-    for (let iter = 0; iter < 20; iter += 1) {
-      let multiplied = multiplyMatrixVector(matrix, size, vector);
-      for (const prev of eigenvectors) {
-        const proj = dot(prev, multiplied);
-        multiplied = multiplied.map((v, i) => v - proj * prev[i]);
-      }
-      const mag = magnitudeOf(multiplied);
-      if (mag < 1e-9) break;
-      vector = multiplied.map((v) => v / mag);
-    }
-    const projected = multiplyMatrixVector(matrix, size, vector);
-    const eigenvalue = dot(vector, projected);
-    if (!Number.isFinite(eigenvalue) || eigenvalue <= 1e-8) break;
-    sigma.push(Math.sqrt(eigenvalue));
-    eigenvectors.push(vector);
-  }
-  const embeddings = Array.from({ length: size }, () =>
-    Array.from({ length: sigma.length }, () => 0),
-  );
-  for (let i = 0; i < size; i += 1) {
-    for (let c = 0; c < sigma.length; c += 1) {
-      embeddings[i][c] = eigenvectors[c][i] * sigma[c];
-    }
-  }
-  return { sigma, embeddings };
-}
-
-function lexicalSimilarity(
-  docTerms: Record<string, number>,
-  queryVector: Record<string, number>,
-  queryNorm: number,
-  idf: Record<string, number>,
-): number {
-  if (queryNorm <= 0) return 0;
-  let dotProduct = 0;
-  let docNormSquared = 0;
-  for (const [token, count] of Object.entries(docTerms)) {
-    const tokenIdf = idf[token];
-    if (!tokenIdf) continue;
-    const docWeight = (1 + Math.log(count)) * tokenIdf;
-    docNormSquared += docWeight * docWeight;
-    if (queryVector[token]) {
-      dotProduct += docWeight * queryVector[token];
-    }
-  }
-  const docNorm = Math.sqrt(docNormSquared) || 1;
-  return dotProduct / (docNorm * Math.max(queryNorm, 1));
-}
-
-function semanticSimilarities(
-  chunks: StoredCommentChunk[],
-  lexicalScores: number[],
-  sigma: number[],
-): Array<number | undefined> {
-  const queryEmb = Array.from({ length: sigma.length }, () => 0);
-  for (let i = 0; i < chunks.length; i += 1) {
-    const lex = lexicalScores[i] ?? 0;
-    if (lex <= 0) continue;
-    const emb = chunks[i].embedding;
-    for (let c = 0; c < sigma.length; c += 1) {
-      const divisor = sigma[c] ** 2 || 1;
-      queryEmb[c] += lex * ((emb[c] ?? 0) / divisor);
-    }
-  }
-  return cosineSimilarities(chunks, queryEmb);
-}
-
-function cosineSimilarities(
-  chunks: StoredCommentChunk[],
-  queryEmb: number[],
-): Array<number | undefined> {
-  const qMag = magnitudeOf(queryEmb);
-  if (qMag <= 1e-9) return chunks.map(() => undefined);
-  return chunks.map((chunk) => {
-    const mag = magnitudeOf(chunk.embedding);
-    if (mag <= 1e-9) return undefined;
-    return dot(queryEmb, chunk.embedding) / (qMag * mag);
-  });
-}
-
 // ── Math helpers ──
 
-function vectorNorm(vector: Record<string, number>): number {
-  return Math.sqrt(
-    Object.values(vector).reduce((sum, v) => sum + v * v, 0),
-  );
-}
-
-function multiplyMatrixVector(
-  matrix: Float64Array,
-  size: number,
-  vector: number[],
-): number[] {
-  const result = new Array<number>(size).fill(0);
-  for (let row = 0; row < size; row += 1) {
-    let total = 0;
-    const offset = row * size;
-    for (let col = 0; col < size; col += 1) {
-      total += matrix[offset + col] * vector[col];
-    }
-    result[row] = total;
-  }
-  return result;
-}
-
-function normalizeDense(values: number[]): number[] {
-  const mag = magnitudeOf(values);
-  if (mag <= 1e-9) return values;
-  return values.map((v) => v / mag);
-}
-
-function magnitudeOf(values: number[]): number {
-  return Math.sqrt(values.reduce((sum, v) => sum + v * v, 0));
-}
-
-function dot(left: number[], right: number[]): number {
-  const size = Math.min(left.length, right.length);
-  let total = 0;
-  for (let i = 0; i < size; i += 1) {
-    total += (left[i] ?? 0) * (right[i] ?? 0);
-  }
-  return total;
-}
-
-function round(value: number, digits = 4): number {
-  const factor = 10 ** digits;
-  return Math.round(value * factor) / factor;
-}
-
-function slugify(value: string): string {
-  return (
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 32) || "collection"
-  );
-}
-
-function safeParseCounts(value: string): Record<string, number> {
-  try {
-    const parsed = JSON.parse(value) as Record<string, number>;
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function safeParseNumberMap(value: string): Record<string, number> {
-  try {
-    const parsed = JSON.parse(value) as Record<string, number>;
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function safeParseNumberArray(
-  value: string | null | undefined,
-): number[] {
-  if (!value) return [];
-  try {
-    const parsed = JSON.parse(value) as number[];
-    return Array.isArray(parsed) ? parsed.map((n) => Number(n) || 0) : [];
-  } catch {
-    return [];
-  }
-}
-
 function localProvenance(): Provenance {
-  return {
-    sourceTier: "none",
-    fetchedAt: new Date().toISOString(),
-    fallbackDepth: 3,
-    partial: false,
-    sourceNotes: [
-      "Query served from the local comment knowledge base.",
-    ],
-  };
+  return buildLocalProvenance("Query served from the local comment knowledge base.");
 }

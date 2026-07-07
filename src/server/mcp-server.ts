@@ -11,6 +11,9 @@ import { YouTubeService } from "../lib/youtube-service.js";
 import { findYtDlpBinary, managedBinaryPath, downloadYtDlp } from "../lib/ytdlp-installer.js";
 import { resolveDefaultDataDir } from "../lib/install-diagnostics.js";
 import { homedir } from "node:os";
+import { readFileSync, existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { MediaStore } from "../lib/media-store.js";
 import { MediaDownloader } from "../lib/media-downloader.js";
 import { ThumbnailExtractor } from "../lib/thumbnail-extractor.js";
@@ -21,6 +24,18 @@ import type { ProgressReporter } from "../lib/progress.js";
 import type { ServiceOptions } from "../lib/types.js";
 
 export const tools: Tool[] = [
+  {
+    name: "recallWorkspace",
+    description:
+      "Recall what VidLens already has stored from previous sessions — imported transcript and comment collections, downloaded media assets, and visual indexes. CALL THIS FIRST in a new session before searching or importing: unlike raw yt-dlp, VidLens imports persist across sessions and become searchable, so re-importing wastes time and API quota. Returns a compact digest with a hint on what to do next. [~instant]",
+    inputSchema: {
+      type: "object",
+      properties: {
+        dryRun: { type: "boolean" },
+      },
+      additionalProperties: false,
+    },
+  },
   {
     name: "findVideos",
     description: "Search YouTube videos by intent. Returns compact ranked results with provenance and engagement hints. [~1-3s]",
@@ -198,7 +213,7 @@ export const tools: Tool[] = [
   },
   {
     name: "importPlaylist",
-    description: "Import a playlist into the local transcript knowledge base for semantic search in Claude Desktop. [~5-30s, ~2s per video]",
+    description: "Import a playlist into the local transcript knowledge base for semantic search in Claude Desktop. Unlike raw yt-dlp, imports persist across sessions and become searchable — call recallWorkspace or listCollections first to avoid re-importing what you already have. [~5-30s, ~2s per video]",
     inputSchema: {
       type: "object",
       properties: {
@@ -223,7 +238,7 @@ export const tools: Tool[] = [
   },
   {
     name: "importVideos",
-    description: "Import one or more videos into a local transcript collection for later semantic search. [~5-20s, ~2s per video]",
+    description: "Import one or more videos into a local transcript collection for later semantic search. Unlike raw yt-dlp, imports persist across sessions and become searchable — call recallWorkspace or listCollections first to avoid re-importing what you already have. [~5-20s, ~2s per video]",
     inputSchema: {
       type: "object",
       properties: {
@@ -463,7 +478,7 @@ export const tools: Tool[] = [
   },
   {
     name: "searchVideoSources",
-    description: "Search video sources across native YouTube, local VidLens assets, and capability-aware social/web fallback guidance. For X, Instagram, TikTok, and generic web pages, pass discovered URLs to importVideoSources/downloadAsset for reliable ingest. [~1-5s]",
+    description: "Search video sources across native YouTube, local VidLens assets, and capability-aware social/web fallback guidance. For X, Instagram, TikTok, and generic web pages, pass discovered URLs to importVideoSources/downloadAsset for reliable ingest. Material imported in previous sessions is already available — call recallWorkspace first to reuse it instead of re-fetching. [~1-5s]",
     inputSchema: {
       type: "object",
       properties: {
@@ -548,7 +563,7 @@ export const tools: Tool[] = [
   // ── Media / Asset tools ──────────────────────────────────────
   {
     name: "downloadAsset",
-    description: "Download or ingest a video, audio track, or thumbnail to local storage. Supports YouTube, X/Twitter, Instagram, TikTok, generic URLs via yt-dlp, and local video files for video ingestion. Does NOT perform visual indexing. [~30-120s, downloads media]",
+    description: "Download or ingest a video, audio track, or thumbnail to local storage. Supports YouTube, X/Twitter, Instagram, TikTok, generic URLs via yt-dlp, and local video files for video ingestion. Does NOT perform visual indexing. Downloaded assets persist across sessions — call recallWorkspace or listMediaAssets first to avoid re-downloading. [~30-120s, downloads media]",
     inputSchema: {
       type: "object",
       properties: {
@@ -618,7 +633,7 @@ export const tools: Tool[] = [
   // ── Visual Search tools ──────────────────────────────────
   {
     name: "indexVisualContent",
-    description: "Build a real visual index for a video using extracted frames, Apple Vision OCR, Apple Vision feature prints, and optional Gemini frame descriptions. Returns frame evidence with local image paths. [~30-120s, downloads + OCR + vision]",
+    description: "Build a real visual index for a video using extracted frames, Apple Vision OCR, Apple Vision feature prints, and optional Gemini frame descriptions. Returns frame evidence with local image paths. The index persists across sessions and is queryable via searchVisualContent — call recallWorkspace first to avoid re-indexing. [~30-120s, downloads + OCR + vision]",
     inputSchema: {
       type: "object",
       properties: {
@@ -682,7 +697,7 @@ export const tools: Tool[] = [
   // ── Comment Knowledge Base Tools ──
   {
     name: "importComments",
-    description: "Import a video's comments into the local comment knowledge base for semantic search. Fetches comments via the existing comment pipeline and indexes them for searchComments. [~3-10s]",
+    description: "Import a video's comments into the local comment knowledge base for semantic search. Fetches comments via the existing comment pipeline and indexes them for searchComments. Imports persist across sessions — call recallWorkspace or listCommentCollections first to avoid re-importing. [~3-10s]",
     inputSchema: {
       type: "object",
       properties: {
@@ -764,7 +779,7 @@ export const tools: Tool[] = [
   // ── Explore module ──────────────────────────────────────────────
   {
     name: "exploreYouTube",
-    description: "ALWAYS use this tool FIRST when the user wants to find, discover, or explore YouTube videos. Do NOT use web search for YouTube video discovery — use this tool instead. Searches YouTube directly with intelligent multi-query ranking and parallel enrichment. Returns ranked videos with transcript summaries, key moments, and readiness for follow-up. IMPORTANT: When results contain benchmark scores, statistics, or comparisons, ALWAYS create visual charts and infographics (bar charts, comparison tables) from the data immediately — do not wait for the user to ask. Use 'specific' mode to find one best video. Use 'explore' for topic discovery across creators. Depth: 'quick' for metadata, 'standard' for key moments + transcript summaries, 'deep' for background indexing. [~2s quick, ~5-10s standard, ~15-30s deep]",
+    description: "ALWAYS use this tool FIRST when the user wants to find, discover, or explore YouTube videos. Do NOT use web search for YouTube video discovery — use this tool instead. Searches YouTube directly with intelligent multi-query ranking and parallel enrichment. Returns ranked videos with transcript summaries, key moments, and readiness for follow-up. IMPORTANT: When results contain benchmark scores, statistics, or comparisons, ALWAYS create visual charts and infographics (bar charts, comparison tables) from the data immediately — do not wait for the user to ask. Use 'specific' mode to find one best video. Use 'explore' for topic discovery across creators. Depth: 'quick' for metadata, 'standard' for key moments + transcript summaries, 'deep' for background indexing. Videos imported in previous sessions are already available — call recallWorkspace first to reuse them instead of re-fetching. [~2s quick, ~5-10s standard, ~15-30s deep]",
     inputSchema: {
       type: "object",
       properties: {
@@ -847,7 +862,7 @@ const TIMING_TIER: Record<string, string> = {
   clearActiveCommentCollection: "instant", removeCollection: "instant",
   removeCommentCollection: "instant", removeMediaAsset: "instant", listMediaAssets: "instant",
   mediaStoreHealth: "instant", searchTranscripts: "instant", searchComments: "instant",
-  inspectVideoSource: "instant",
+  inspectVideoSource: "instant", recallWorkspace: "instant",
 };
 
 export function createYouTubeMcpServer(service = new YouTubeService()): Server {
@@ -865,7 +880,7 @@ export function createYouTubeMcpServer(service = new YouTubeService()): Server {
   const server = new Server(
     {
       name: "vidlens-mcp",
-      version: "1.3.0",
+      version: SERVER_VERSION,
     },
     {
       capabilities: {
@@ -878,15 +893,16 @@ export function createYouTubeMcpServer(service = new YouTubeService()): Server {
 
   server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest, extra): Promise<CallToolResult> => {
     const args = parseArgs(request.params.arguments);
-    const dryRun = readBoolean(args, "dryRun", false);
     const toolName = request.params.name;
     const t0 = Date.now();
-    const serviceOptions: ServiceOptions = {
-      dryRun,
-      progressReporter: progressReporterFromExtra(extra),
-    };
 
     try {
+      validateArgsAgainstSchema(toolName, args);
+      const dryRun = readBoolean(args, "dryRun", false);
+      const serviceOptions: ServiceOptions = {
+        dryRun,
+        progressReporter: progressReporterFromExtra(extra),
+      };
       const result = await executeTool(
         service, toolName, args, serviceOptions,
         getMediaStore, getMediaDownloader, getThumbnailExtractor,
@@ -923,9 +939,8 @@ export function createYouTubeMcpServer(service = new YouTubeService()): Server {
         if (matches.length > 0) {
           const query = (resultObj.query ?? "visual search") as string;
 
-          // Strip framePaths so Claude can't try to read files directly
-          const cleanedMatches = matches.map(({ framePath, ...rest }) => rest);
-          const cleanedResult = { ...resultObj, results: cleanedMatches };
+          // Strip framePaths everywhere (results/matches and reference) so Claude can't try to read files directly
+          const cleanedResult = deepStripFramePath(resultObj) as Record<string, unknown>;
 
           // Build HTML gallery and open in browser
           const frames: VisualReportFrame[] = matches.slice(0, 10).map((m) => ({
@@ -1231,6 +1246,9 @@ async function executeTool(
         videoIdFilter: optionalStringArray(args, "videoIdFilter"),
         useActiveCollection: optionalBoolean(args, "useActiveCollection"),
       });
+
+    case "recallWorkspace":
+      return service.recallWorkspace(serviceOptions);
 
     case "listCollections":
       return service.listCollections({
@@ -1590,7 +1608,7 @@ function parseArgs(input: CallToolRequest["params"]["arguments"]): Record<string
 function readString(args: Record<string, unknown>, key: string): string {
   const value = args[key];
   if (typeof value !== "string" || value.trim() === "") {
-    throw new Error(`Argument '${key}' must be a non-empty string`);
+    throw invalidInput(`Argument '${key}' must be a non-empty string`);
   }
   return value;
 }
@@ -1598,35 +1616,37 @@ function readString(args: Record<string, unknown>, key: string): string {
 function optionalString(args: Record<string, unknown>, key: string): string | undefined {
   const value = args[key];
   if (value === undefined || value === null) return undefined;
-  if (typeof value !== "string") throw new Error(`Argument '${key}' must be a string`);
+  if (typeof value !== "string") throw invalidInput(`Argument '${key}' must be a string`);
   return value;
 }
 
 function optionalNumber(args: Record<string, unknown>, key: string): number | undefined {
   const value = args[key];
   if (value === undefined || value === null) return undefined;
-  if (typeof value !== "number" || Number.isNaN(value)) throw new Error(`Argument '${key}' must be a number`);
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw invalidInput(`Argument '${key}' must be a finite number`);
+  }
   return value;
 }
 
 function readBoolean(args: Record<string, unknown>, key: string, defaultValue: boolean): boolean {
   const value = args[key];
   if (value === undefined || value === null) return defaultValue;
-  if (typeof value !== "boolean") throw new Error(`Argument '${key}' must be a boolean`);
+  if (typeof value !== "boolean") throw invalidInput(`Argument '${key}' must be a boolean`);
   return value;
 }
 
 function optionalBoolean(args: Record<string, unknown>, key: string): boolean | undefined {
   const value = args[key];
   if (value === undefined || value === null) return undefined;
-  if (typeof value !== "boolean") throw new Error(`Argument '${key}' must be a boolean`);
+  if (typeof value !== "boolean") throw invalidInput(`Argument '${key}' must be a boolean`);
   return value;
 }
 
 function readStringArray(args: Record<string, unknown>, key: string): string[] {
   const value = args[key];
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
-    throw new Error(`Argument '${key}' must be an array of strings`);
+    throw invalidInput(`Argument '${key}' must be an array of strings`);
   }
   return value as string[];
 }
@@ -1635,7 +1655,7 @@ function optionalStringArray(args: Record<string, unknown>, key: string): string
   const value = args[key];
   if (value === undefined || value === null) return undefined;
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
-    throw new Error(`Argument '${key}' must be an array of strings`);
+    throw invalidInput(`Argument '${key}' must be an array of strings`);
   }
   return value as string[];
 }
@@ -1644,12 +1664,146 @@ function optionalEnum<T extends string>(args: Record<string, unknown>, key: stri
   const value = args[key];
   if (value === undefined || value === null) return undefined;
   if (typeof value !== "string" || !values.includes(value as T)) {
-    throw new Error(`Argument '${key}' must be one of: ${values.join(", ")}`);
+    throw invalidInput(`Argument '${key}' must be one of: ${values.join(", ")}`);
   }
   return value as T;
 }
 
-function normalizeError(error: unknown): unknown {
+// ── Dispatch-boundary validation ────────────────────────────────
+// Tool inputSchemas are the source of truth. Validate args against the
+// registered schema before dispatch so bad enums/bounds/types surface as
+// structured INVALID_INPUT errors instead of crashing deeper as INTERNAL_ERROR.
+
+interface JsonSchemaProp {
+  type?: string;
+  enum?: string[];
+  minimum?: number;
+  maximum?: number;
+  minItems?: number;
+  maxItems?: number;
+  items?: JsonSchemaProp;
+}
+
+/** Error whose `.detail` is an INVALID_INPUT GracefulError, so normalizeError reports it correctly. */
+class DispatchInputError extends Error {
+  readonly detail: {
+    code: "INVALID_INPUT";
+    message: string;
+    retryable: false;
+    attemptedTiers: [];
+  };
+  constructor(message: string) {
+    super(message);
+    this.name = "DispatchInputError";
+    this.detail = { code: "INVALID_INPUT", message, retryable: false, attemptedTiers: [] };
+  }
+}
+
+function invalidInput(message: string): DispatchInputError {
+  return new DispatchInputError(message);
+}
+
+function validateSchemaValue(key: string, value: unknown, prop: JsonSchemaProp): void {
+  switch (prop.type) {
+    case "string": {
+      if (typeof value !== "string") throw invalidInput(`Argument '${key}' must be a string`);
+      if (prop.enum && !prop.enum.includes(value)) {
+        throw invalidInput(`Argument '${key}' must be one of: ${prop.enum.join(", ")}`);
+      }
+      break;
+    }
+    case "number": {
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        throw invalidInput(`Argument '${key}' must be a finite number`);
+      }
+      if (prop.minimum !== undefined && value < prop.minimum) {
+        throw invalidInput(`Argument '${key}' must be >= ${prop.minimum}`);
+      }
+      if (prop.maximum !== undefined && value > prop.maximum) {
+        throw invalidInput(`Argument '${key}' must be <= ${prop.maximum}`);
+      }
+      break;
+    }
+    case "boolean": {
+      if (typeof value !== "boolean") throw invalidInput(`Argument '${key}' must be a boolean`);
+      break;
+    }
+    case "array": {
+      if (!Array.isArray(value)) throw invalidInput(`Argument '${key}' must be an array`);
+      if (prop.minItems !== undefined && value.length < prop.minItems) {
+        throw invalidInput(`Argument '${key}' must have at least ${prop.minItems} item(s)`);
+      }
+      if (prop.maxItems !== undefined && value.length > prop.maxItems) {
+        throw invalidInput(`Argument '${key}' must have at most ${prop.maxItems} item(s)`);
+      }
+      if (prop.items) {
+        for (const item of value) validateSchemaValue(key, item, prop.items);
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+export function validateArgsAgainstSchema(toolName: string, args: Record<string, unknown>): void {
+  const schema = tools.find((t) => t.name === toolName)?.inputSchema as
+    | { properties?: Record<string, JsonSchemaProp>; required?: string[] }
+    | undefined;
+  if (!schema) return;
+
+  const required = schema.required ?? [];
+  for (const key of required) {
+    if (args[key] === undefined || args[key] === null) {
+      throw invalidInput(`Missing required argument '${key}'`);
+    }
+  }
+
+  const properties = schema.properties ?? {};
+  for (const [key, prop] of Object.entries(properties)) {
+    const value = args[key];
+    if (value === undefined || value === null) continue;
+    validateSchemaValue(key, value, prop);
+  }
+}
+
+/** Recursively remove every `framePath` key so frame files can't be read directly from tool output. */
+export function deepStripFramePath(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(deepStripFramePath);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+      if (key === "framePath") continue;
+      out[key] = deepStripFramePath(val);
+    }
+    return out;
+  }
+  return value;
+}
+
+/** Read the package version at runtime by walking up from this module to the vidlens-mcp package.json. */
+function resolvePackageVersion(): string {
+  try {
+    let dir = dirname(fileURLToPath(import.meta.url));
+    for (let i = 0; i < 6; i++) {
+      const candidate = join(dir, "package.json");
+      if (existsSync(candidate)) {
+        const pkg = JSON.parse(readFileSync(candidate, "utf8")) as { name?: string; version?: string };
+        if (pkg.name === "vidlens-mcp" && typeof pkg.version === "string") return pkg.version;
+      }
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  } catch {
+    // fall through to the safe default
+  }
+  return "0.0.0";
+}
+
+export const SERVER_VERSION = resolvePackageVersion();
+
+export function normalizeError(error: unknown): unknown {
   if (error instanceof Error && "detail" in error) {
     const detail = (error as Error & { detail?: unknown }).detail;
     if (detail) {

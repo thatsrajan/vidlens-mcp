@@ -12,6 +12,7 @@ import { MediaStore, type AssetKind, type MediaAsset } from "./media-store.js";
 import { resolveVideoSource, type VideoSourceRef } from "./video-source.js";
 import { CookieStore } from "./auth/cookie-store.js";
 import { redactError } from "./redactor.js";
+import { assertPublicHttpUrl } from "./url-guard.js";
 
 /* ── Types ─────────────────────────────────────────────────────── */
 
@@ -30,6 +31,8 @@ export interface DownloadResult {
   asset: MediaAsset;
   downloadedBytes: number;
   durationMs: number;
+  /** True when the asset was served from an existing local file (no download performed). */
+  cached: boolean;
 }
 
 /* ── Downloader ────────────────────────────────────────────────── */
@@ -49,20 +52,27 @@ export class MediaDownloader {
     const videoId = source.assetKey;
     const url = source.localPath ?? source.canonicalUrl;
     const outDir = options.outputDir ?? this.store.videoDir(videoId);
-    const maxSizeMb = options.maxSizeMb ?? 500;
+    const maxSizeMb = clampMaxSizeMb(options.maxSizeMb);
     const startMs = Date.now();
 
-    // Check if we already have this kind for this video
+    // SSRF guard: any non-local URL is about to be handed to yt-dlp.
+    if (source.platform !== "local_file") {
+      assertPublicHttpUrl(url);
+    }
+
+    // Check if we already have this exact format for this video. Kind alone is
+    // ambiguous for video (best_video and worst_video share kind "video"), so
+    // match on the recorded format too.
     const existing = this.store.listAssetsForVideo(videoId);
-    const kind = formatToKind(options.format);
     const alreadyHave = existing.find(
-      (a) => a.kind === kind && existsSync(a.filePath),
+      (a) => existsSync(a.filePath) && assetMatchesFormat(a, options.format),
     );
     if (alreadyHave) {
       return {
         asset: alreadyHave,
         downloadedBytes: 0,
         durationMs: Date.now() - startMs,
+        cached: true,
       };
     }
 
@@ -73,6 +83,8 @@ export class MediaDownloader {
     if (options.format === "thumbnail") {
       return this.downloadThumbnail(source, url, outDir, startMs);
     }
+
+    const kind = formatToKind(options.format);
 
     // Build yt-dlp args
     const formatArg = ytdlpFormatArg(options.format);
@@ -123,9 +135,12 @@ export class MediaDownloader {
         extractor: meta.extractor,
         webpageUrl: meta.webpage_url,
         sourceInput: options.videoIdOrUrl,
+        format: options.format,
       });
     } catch {
-      // non-critical
+      // Metadata dump is non-critical, but still record the requested format so
+      // dedupe can distinguish best_video from worst_video on the next call.
+      metadata = { format: options.format };
     }
 
     const asset = this.store.registerAsset({
@@ -144,6 +159,7 @@ export class MediaDownloader {
       asset,
       downloadedBytes: stat.size,
       durationMs: Date.now() - startMs,
+      cached: false,
     };
   }
 
@@ -220,6 +236,7 @@ export class MediaDownloader {
       asset,
       downloadedBytes: stat.size,
       durationMs: Date.now() - startMs,
+      cached: false,
     };
   }
 
@@ -282,6 +299,7 @@ export class MediaDownloader {
         sourceInput: source.input,
         originalPath: source.localPath,
         title: source.titleHint,
+        format,
       }),
     });
 
@@ -289,6 +307,7 @@ export class MediaDownloader {
       asset,
       downloadedBytes: existsSync(outFile) && outFile !== source.localPath ? statSync(outFile).size : 0,
       durationMs: Date.now() - startMs,
+      cached: false,
     };
   }
 
@@ -354,6 +373,7 @@ export class MediaDownloader {
         sourceInput: source.input,
         originalPath: source.localPath,
         title: source.titleHint,
+        format: "best_audio",
       }),
     });
 
@@ -361,6 +381,7 @@ export class MediaDownloader {
       asset,
       downloadedBytes: stat.size,
       durationMs: Date.now() - startMs,
+      cached: false,
     };
   }
 
@@ -381,6 +402,29 @@ export class MediaDownloader {
 }
 
 /* ── Helpers ───────────────────────────────────────────────────── */
+
+/** Clamp maxSizeMb to a sane [1, 5000] range and reject non-finite values (Infinity/NaN). */
+function clampMaxSizeMb(value: number | undefined): number {
+  if (value === undefined) return 500;
+  if (!Number.isFinite(value)) {
+    throw new Error(`maxSizeMb must be a finite number (got ${value}).`);
+  }
+  return Math.min(5000, Math.max(1, value));
+}
+
+/**
+ * Whether an existing asset satisfies a requested format. Audio/thumbnail kinds
+ * map 1:1 from format so kind equality is enough; the "video" kind is produced
+ * by both best_video and worst_video, so the recorded format must match to avoid
+ * returning a low-quality file when the caller asked for the best (or vice-versa).
+ */
+function assetMatchesFormat(asset: MediaAsset, format: DownloadFormat): boolean {
+  const kind = formatToKind(format);
+  if (asset.kind !== kind) return false;
+  if (kind !== "video") return true;
+  const recorded = typeof asset.meta?.format === "string" ? asset.meta.format : undefined;
+  return recorded === format;
+}
 
 function formatToKind(format: DownloadFormat): AssetKind {
   switch (format) {
@@ -424,15 +468,11 @@ function findDownloadedFile(dir: string, videoId: string): string | undefined {
   if (!existsSync(dir)) return undefined;
   const files = readdirSync(dir);
   const isUsable = (f: string) => !f.includes("-thumb") && !f.endsWith(".part") && !f.startsWith(".");
-  // Prefer files matching the video ID (skip .part and intermediate format files)
-  const match = files.find((f) => f.startsWith(videoId) && isUsable(f));
-  if (match) return match;
-  // Fallback: newest usable file
-  const candidates = files
-    .filter(isUsable)
-    .map((f) => ({ name: f, mtime: statSync(join(dir, f)).mtimeMs }))
-    .sort((a, b) => b.mtime - a.mtime);
-  return candidates[0]?.name;
+  // Only accept a file that belongs to this video's output template
+  // (`${videoId}.<ext>`). Never fall back to "newest usable file" — that can
+  // register an unrelated download left in the directory. The caller raises a
+  // clear error when nothing matches.
+  return files.find((f) => isUsable(f) && f.includes(videoId));
 }
 
 function findFile(dir: string, prefix: string): string | undefined {

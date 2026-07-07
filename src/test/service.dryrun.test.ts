@@ -133,3 +133,40 @@ test("V1 and V2 tools return structured dry-run outputs", async () => {
   assert.equal(typeof competitors.landscape.totalChannelsSampled, "number");
   assert.equal(competitors.limitations.length > 0, true);
 });
+
+test("recallWorkspace returns a compact cross-session digest in dry-run", async () => {
+  const recall = await service.recallWorkspace();
+
+  assert.equal(recall.provenance.sourceTier, "none");
+  assert.equal(typeof recall.hint, "string");
+  assert.equal(recall.hint.length > 0, true);
+  assert.equal(typeof recall.dataDir, "string");
+
+  // Transcript collections
+  assert.equal(typeof recall.transcriptCollections.count, "number");
+  assert.equal(Array.isArray(recall.transcriptCollections.items), true);
+  const collection = recall.transcriptCollections.items[0];
+  assert.ok(collection);
+  assert.equal(typeof collection.collectionId, "string");
+  assert.equal(typeof collection.videoCount, "number");
+  assert.equal(typeof collection.chunkCount, "number");
+  assert.equal(typeof collection.embedding, "string");
+  assert.equal(typeof collection.lastUpdatedAt, "string");
+  assert.equal(typeof collection.isActive, "boolean");
+
+  // Comment collections
+  assert.equal(typeof recall.commentCollections.count, "number");
+  assert.equal(Array.isArray(recall.commentCollections.items), true);
+  assert.equal(typeof recall.commentCollections.items[0]?.commentChunkCount, "number");
+
+  // Media store totals
+  assert.equal(typeof recall.mediaStore.totalAssets, "number");
+  assert.equal(typeof recall.mediaStore.totalSizeBytes, "number");
+  assert.equal(typeof recall.mediaStore.videoCount, "number");
+  assert.equal(typeof recall.mediaStore.byKind, "object");
+
+  // Visual index summary (present in the dry-run fixture)
+  assert.ok(recall.visualIndex);
+  assert.equal(typeof recall.visualIndex.indexedVideoCount, "number");
+  assert.equal(typeof recall.visualIndex.totalFrames, "number");
+});

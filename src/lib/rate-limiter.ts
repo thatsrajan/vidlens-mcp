@@ -40,10 +40,10 @@ export class RateLimiter {
     const intervals = elapsed / this.options.refillIntervalMs;
     const newTokens = intervals * this.options.refillRate;
 
-    if (newTokens >= 1) {
-      this.tokens = Math.min(this.options.maxTokens, this.tokens + newTokens);
-      this.lastRefill = now;
-    }
+    // Always accumulate (including fractional refills) and advance the clock so
+    // sub-token amounts are not silently dropped between calls.
+    this.tokens = Math.min(this.options.maxTokens, this.tokens + newTokens);
+    this.lastRefill = now;
   }
 
   /**
@@ -60,25 +60,26 @@ export class RateLimiter {
 
     this.refill();
 
-    if (this.tokens >= cost) {
-      this.tokens -= cost;
-      this._stats.totalAcquired += cost;
-      return 0;
+    // Loop until enough tokens are actually available. Re-checking after each
+    // sleep is what keeps N concurrent waiters from all decrementing on a single
+    // refill and driving `tokens` negative (each waiter that wakes to an
+    // insufficient balance simply waits again).
+    let totalWaitMs = 0;
+    while (this.tokens < cost) {
+      const deficit = cost - this.tokens;
+      const intervalsNeeded = deficit / this.options.refillRate;
+      const waitMs = Math.max(1, Math.ceil(intervalsNeeded * this.options.refillIntervalMs));
+
+      await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
+      totalWaitMs += waitMs;
+      this.refill();
     }
 
-    // Calculate how long we need to wait for enough tokens
-    const deficit = cost - this.tokens;
-    const intervalsNeeded = deficit / this.options.refillRate;
-    const waitMs = Math.ceil(intervalsNeeded * this.options.refillIntervalMs);
-
-    await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
-
-    this.refill();
     this.tokens -= cost;
     this._stats.totalAcquired += cost;
-    this._stats.totalWaitMs += waitMs;
+    this._stats.totalWaitMs += totalWaitMs;
 
-    return waitMs;
+    return totalWaitMs;
   }
 
   /** Try to acquire without waiting. Returns true if acquired. */

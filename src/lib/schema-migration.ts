@@ -104,8 +104,19 @@ export const KNOWLEDGE_BASE_MIGRATIONS: Migration[] = [
     description:
       "Add chunk_type column to transcript_chunks for comment/visual indexing",
     up: (db) => {
-      // SQLite doesn't support IF NOT EXISTS for ALTER TABLE ADD COLUMN,
-      // so check via PRAGMA table_info first.
+      // Guarded/idempotent so this runs safely from either store's constructor,
+      // in any open order, on both fresh and legacy DBs:
+      //   - If transcript_chunks doesn't exist yet (e.g. the comment store opened
+      //     the shared file first), skip — the transcript store's CREATE TABLE
+      //     already includes chunk_type when it later creates the table.
+      //   - If the column already exists (fresh DB, or re-run), skip the ALTER —
+      //     SQLite has no IF NOT EXISTS for ADD COLUMN.
+      const tableExists = db
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'transcript_chunks'")
+        .get() as { 1: number } | undefined;
+      if (!tableExists) {
+        return;
+      }
       const tableInfo = db.prepare("PRAGMA table_info(transcript_chunks)").all() as Array<{ name: string }>;
       const hasChunkType = tableInfo.some((col) => col.name === "chunk_type");
       if (!hasChunkType) {

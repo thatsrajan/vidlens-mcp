@@ -1,4 +1,5 @@
 import { execa } from "execa";
+import { fetchWithTimeout } from "./fetch-timeout.js";
 import {
   buildChannelUrl,
   buildPlaylistUrl,
@@ -156,14 +157,7 @@ export class YtDlpClient {
   }
 
   async comments(videoId: string, maxResults: number): Promise<CommentRecord[]> {
-    const payload = await this.runJson([
-      "--dump-single-json",
-      "--no-warnings",
-      "--skip-download",
-      "--extractor-args",
-      `youtube:max_comments=${Math.max(maxResults, 1)}`,
-      buildVideoUrl(videoId),
-    ]);
+    const payload = await this.runJson(buildCommentsArgs(buildVideoUrl(videoId), maxResults));
 
     return (payload.comments ?? [])
       .filter((item) => item.text)
@@ -336,7 +330,7 @@ export class YtDlpClient {
       throw new Error("No subtitle or automatic caption track available from yt-dlp metadata");
     }
 
-    const response = await fetch(picked.track.url);
+    const response = await fetchWithTimeout(picked.track.url);
     if (!response.ok) {
       throw new Error(`Failed to fetch subtitle track: HTTP ${response.status}`);
     }
@@ -357,6 +351,26 @@ export class YtDlpClient {
       chapters: parseDescriptionChapters(payload.description),
     };
   }
+}
+
+/**
+ * Builds the yt-dlp argv for comment extraction.
+ *
+ * `--write-comments` (aka --get-comments) is what actually enables comment
+ * extraction; the `youtube:max_comments` extractor-arg only caps a run that this
+ * flag turns on. Without the flag, payload.comments is always undefined.
+ */
+export function buildCommentsArgs(videoUrl: string, maxResults: number): string[] {
+  const limit = Math.max(maxResults, 1);
+  return [
+    "--dump-single-json",
+    "--no-warnings",
+    "--skip-download",
+    "--write-comments",
+    "--extractor-args",
+    `youtube:max_comments=${limit}`,
+    videoUrl,
+  ];
 }
 
 function parseSubtitleContent(input: string): { text: string; segments: TranscriptSegment[] } {

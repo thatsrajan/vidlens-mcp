@@ -1,5 +1,5 @@
-import { mkdirSync, statSync } from "node:fs";
-import { basename, extname, join } from "node:path";
+import { mkdirSync, rmSync, statSync } from "node:fs";
+import { basename, dirname, extname, join } from "node:path";
 import { execa } from "execa";
 
 export interface AudioChunk {
@@ -18,15 +18,36 @@ export interface ChunkAudioOptions {
 
 const DEFAULT_MAX_BYTES = 24 * 1024 * 1024;
 
+/**
+ * Chunk duration (seconds) that keeps each chunk under `maxBytes`, derived from the
+ * file's measured byte-rate. The 0.9 factor leaves headroom for encoder overhead and
+ * downstream base64 expansion. An explicit cap only lowers the result, never raises it.
+ */
+export function deriveChunkDurationSec(
+  sizeBytes: number,
+  durationSec: number,
+  maxBytes: number,
+  explicitCapSec?: number,
+): number {
+  const bytesPerSec = sizeBytes / durationSec;
+  const derived = Math.max(1, Math.floor((maxBytes * 0.9) / bytesPerSec));
+  return explicitCapSec ? Math.min(explicitCapSec, derived) : derived;
+}
+
 export async function chunkAudioForStt(audioPath: string, options: ChunkAudioOptions = {}): Promise<AudioChunk[]> {
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
   const stat = statSync(audioPath);
   const durationSec = await probeDuration(audioPath, options.ffprobeBinary ?? "ffprobe");
-  if (stat.size <= maxBytes || !durationSec || durationSec <= (options.chunkDurationSec ?? 300)) {
+  // Anything already under the cap is fine as a single chunk regardless of duration.
+  if (stat.size <= maxBytes) {
+    return [{ path: audioPath, startSec: 0, durationSec }];
+  }
+  // Over the cap but we can't measure duration — nothing to base chunk boundaries on.
+  if (!durationSec || durationSec <= 0) {
     return [{ path: audioPath, startSec: 0, durationSec }];
   }
 
-  const chunkDurationSec = options.chunkDurationSec ?? 300;
+  const chunkDurationSec = deriveChunkDurationSec(stat.size, durationSec, maxBytes, options.chunkDurationSec);
   const outputDir = options.outputDir ?? join(audioPath + ".chunks");
   mkdirSync(outputDir, { recursive: true });
   const ext = extname(audioPath) || ".m4a";
@@ -50,6 +71,28 @@ export async function chunkAudioForStt(audioPath: string, options: ChunkAudioOpt
   }
 
   return chunks;
+}
+
+/**
+ * Remove any temp chunk directories created by {@link chunkAudioForStt}. Passthrough
+ * chunks reuse the original path (same dir as the source file) and are left untouched;
+ * only generated chunks live under `<audio>.chunks/`, so only those dirs are removed.
+ * Callers should invoke this in a finally block once transcription of the chunks is done.
+ */
+export function cleanupChunks(chunks: AudioChunk[], originalPath: string): void {
+  const dirs = new Set<string>();
+  for (const chunk of chunks) {
+    if (chunk.path !== originalPath) {
+      dirs.add(dirname(chunk.path));
+    }
+  }
+  for (const dir of dirs) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Best-effort cleanup; a leftover temp dir must not fail transcription.
+    }
+  }
 }
 
 export async function probeDuration(path: string, ffprobeBinary = "ffprobe"): Promise<number | undefined> {

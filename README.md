@@ -6,7 +6,7 @@
   <a href="https://www.npmjs.com/package/vidlens-mcp"><img src="https://img.shields.io/npm/v/vidlens-mcp?style=flat-square&color=red" alt="npm" /></a>
   <a href="https://github.com/thatsrajan/vidlens-mcp/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License" /></a>
   <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-compatible-green?style=flat-square" alt="MCP" /></a>
-  <img src="https://img.shields.io/badge/tools-46-orange?style=flat-square" alt="46 tools" />
+  <img src="https://img.shields.io/badge/tools-47-orange?style=flat-square" alt="47 tools" />
   <img src="https://img.shields.io/badge/zero--config-✓-brightgreen?style=flat-square" alt="Zero Config" />
 </p>
 
@@ -93,7 +93,7 @@ Download videos/audio/thumbnails. Extract keyframes. Index comments for semantic
 <tr><td>🛡️ <strong>Reliability</strong></td><td>✅ Three-tier fallback on every tool</td><td>❌ Single point of failure - API down = broken</td></tr>
 <tr><td>🧠 <strong>Intelligence</strong></td><td>✅ Sentiment, trends, content gaps, hooks</td><td>❌ Raw data dumps - you do the analysis</td></tr>
 <tr><td>📦 <strong>Token efficiency</strong></td><td>✅ 75-87% smaller responses</td><td>❌ Verbose JSON with thumbnails, etags, junk</td></tr>
-<tr><td>🔬 <strong>Depth</strong></td><td>✅ 46 tools across 11 modules</td><td>⚠️ 1-5 tools, mostly transcripts only</td></tr>
+<tr><td>🔬 <strong>Depth</strong></td><td>✅ 47 tools across 11 modules</td><td>⚠️ 1-5 tools, mostly transcripts only</td></tr>
 <tr><td>🖼️ <strong>Visual evidence</strong></td><td>✅ Returns actual frame paths + timestamps, not just text hits</td><td>⚠️ Usually transcript-only or raw frame dumps</td></tr>
 <tr><td>⚖️ <strong>Trademark</strong></td><td>✅ Compliant naming</td><td>⚠️ Most violate YouTube trademark</td></tr>
 </table>
@@ -158,7 +158,7 @@ Start with "Search YouTube" to activate VidLens:
 
 ---
 
-## 🧰 Tools - 46 across 11 modules
+## 🧰 Tools - 47 across 11 modules
 
 ### 🔍 Explore - YouTube Discovery & Research
 *The front door — one prompt, full pipeline*
@@ -278,6 +278,7 @@ Start with "Search YouTube" to activate VidLens:
 
 | Tool | What it does |
 |---|---|
+| `recallWorkspace` | Session-start recall of everything already imported (collections, media, visual indexes) — call first to avoid re-importing |
 | `checkSystemHealth` | Full system diagnostic report |
 | `checkImportReadiness` | Validate before importing content |
 
@@ -448,6 +449,32 @@ Everything lives in a single directory. No external databases, no Docker, no inf
 </p>
 
 One directory. Portable. Back it up by copying. Delete it to start fresh.
+
+---
+
+## 🧠 Persistent memory across sessions
+
+VidLens is durable memory for video work, not a per-session scratchpad. Everything you import
+persists on disk under `VIDLENS_DATA_DIR` and is there next time — no re-downloading, no
+re-transcribing.
+
+**What persists:** transcript collections, comment collections, downloaded media assets
+(video/audio/thumbnails), and visual indexes (frames, OCR text, embeddings). Even the active
+collection is remembered.
+
+**Recall it in one call.** At the start of a session, call **`recallWorkspace`** — it returns a
+compact digest of every collection, media asset, and visual index already stored, so an agent
+knows what it has before searching or importing. Tool descriptions carry the same reminder into
+every client automatically, so agents check first instead of re-fetching.
+
+**One shared library across agents.** The default data dir is the same for every client, so
+Claude Desktop, Claude Code, and Codex all pointed at it share a single library — import a video
+in one and search it from another. Point them at the same `VIDLENS_DATA_DIR` explicitly if you
+customize the location.
+
+> ⚠️ **Do not put `VIDLENS_DATA_DIR` inside Dropbox, iCloud, Google Drive, or any file-sync
+> folder.** VidLens uses SQLite (with WAL), and live databases under a file syncer get corrupted
+> or spawn conflict copies. Keep the data dir on a local disk (the default already does this).
 
 ---
 

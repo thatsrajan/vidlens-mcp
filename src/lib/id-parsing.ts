@@ -56,8 +56,14 @@ export function parseVideoId(input: string): string | null {
       const id = pathParts[markerIndex + 1];
       return id && VIDEO_ID_RE.test(id) ? id : null;
     }
+
+    // A parseable URL with no real video marker (v=, /watch, /shorts, /embed,
+    // youtu.be) is NOT a video URL. Do not fabricate an ID from an arbitrary
+    // trailing path segment (e.g. youtube.com/c/TechLinked1).
+    return null;
   }
 
+  // Non-URL raw strings only: allow the loose fallback for bare fragments.
   const match = raw.match(/(?:v=|\/)([A-Za-z0-9_-]{11})(?:[?&/\s]|$)/);
   return match?.[1] ?? null;
 }

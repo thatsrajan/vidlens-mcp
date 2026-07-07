@@ -10,6 +10,7 @@ import { homedir } from "node:os";
 import { join, basename, extname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
+import { MEDIA_STORE_MIGRATIONS, runMigrations } from "./schema-migration.js";
 
 /* ── Types ─────────────────────────────────────────────────────── */
 
@@ -85,6 +86,7 @@ export class MediaStore {
     this.db.exec("PRAGMA journal_mode=WAL");
     this.db.exec("PRAGMA foreign_keys=ON");
     this.migrate();
+    runMigrations(this.db, "media-manifest.db", MEDIA_STORE_MIGRATIONS);
   }
 
   private migrate(): void {
@@ -289,11 +291,11 @@ export class MediaStore {
     const asset = this.getAsset(assetId);
     if (!asset) return false;
 
+    this.db.prepare("DELETE FROM media_assets WHERE asset_id = ?").run(assetId);
+
     if (deleteFile && existsSync(asset.filePath)) {
       unlinkSync(asset.filePath);
     }
-
-    this.db.prepare("DELETE FROM media_assets WHERE asset_id = ?").run(assetId);
     return true;
   }
 
@@ -302,6 +304,7 @@ export class MediaStore {
    */
   removeVideoAssets(videoId: string, deleteFiles = true): number {
     const assets = this.listAssetsForVideo(videoId);
+    this.db.prepare("DELETE FROM media_assets WHERE video_id = ?").run(videoId);
     if (deleteFiles) {
       for (const asset of assets) {
         if (existsSync(asset.filePath)) {
@@ -309,7 +312,6 @@ export class MediaStore {
         }
       }
     }
-    this.db.prepare("DELETE FROM media_assets WHERE video_id = ?").run(videoId);
     return assets.length;
   }
 

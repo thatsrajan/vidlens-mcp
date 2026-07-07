@@ -87,6 +87,17 @@ describe("parseVideoId", () => {
   it("trims whitespace from input", () => {
     assert.equal(parseVideoId("  dQw4w9WgXcQ  "), "dQw4w9WgXcQ");
   });
+
+  it("does not fabricate an ID from a non-video channel URL path", () => {
+    // Both trailing segments are 11 chars and matched the old loose fallback,
+    // but neither URL is a video URL.
+    assert.equal(parseVideoId("https://www.youtube.com/c/TechLinked1"), null);
+    assert.equal(parseVideoId("https://www.youtube.com/user/Creator1234"), null);
+  });
+
+  it("rejects a URL whose only 11-char token is not behind a video marker", () => {
+    assert.equal(parseVideoId("https://example.com/some/AbcDefGhi12"), null);
+  });
 });
 
 describe("parsePlaylistId", () => {

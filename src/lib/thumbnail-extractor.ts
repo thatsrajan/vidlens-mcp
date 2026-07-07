@@ -30,8 +30,42 @@ export interface ExtractKeyframesOptions {
 export interface ExtractKeyframesResult {
   videoId: string;
   framesExtracted: number;
+  /** Number of sampled timestamps whose ffmpeg extraction failed (surfaced, not fatal). */
+  framesFailed: number;
   assets: MediaAsset[];
   durationMs: number;
+}
+
+/**
+ * Choose the timestamps to sample from a video of `durationSec`.
+ *
+ * If a strict `intervalSec` walk from t=0 fits inside the `maxFrames` budget, sample every
+ * `intervalSec` (fine-grained coverage of short videos). Otherwise the interval walk would
+ * only cover the first `maxFrames * intervalSec` seconds and leave the tail of a long video
+ * un-indexed — so instead spread the frame budget evenly across the WHOLE duration. This keeps
+ * indexed coverage near-complete for long videos, which is what the auto-reindex coverage check
+ * in visual-search relies on (see VISUAL_COVERAGE_THRESHOLD).
+ */
+export function computeSampleTimestamps(durationSec: number, intervalSec: number, maxFrames: number): number[] {
+  if (!(durationSec > 0) || maxFrames < 1 || intervalSec <= 0) return [];
+
+  const framesByInterval = Math.floor((durationSec - 1e-6) / intervalSec) + 1;
+  if (framesByInterval <= maxFrames) {
+    const timestamps: number[] = [];
+    for (let t = 0; t < durationSec && timestamps.length < maxFrames; t += intervalSec) {
+      timestamps.push(t);
+    }
+    return timestamps;
+  }
+
+  // Too many frames for the budget — spread evenly across the full duration so the last sampled
+  // frame lands near the end of the video (at (maxFrames-1)/maxFrames of the duration).
+  const step = durationSec / maxFrames;
+  const timestamps: number[] = [];
+  for (let i = 0; i < maxFrames; i += 1) {
+    timestamps.push(Math.round(i * step));
+  }
+  return timestamps;
 }
 
 /* ── Extractor ─────────────────────────────────────────────────── */
@@ -75,16 +109,15 @@ export class ThumbnailExtractor {
       throw new Error(`Could not determine duration for ${videoPath}. Confirm ffmpeg/ffprobe can read this file, then rerun extraction.`);
     }
 
-    // Calculate timestamps
-    const timestamps: number[] = [];
-    for (let t = 0; t < durationSec && timestamps.length < maxFrames; t += intervalSec) {
-      timestamps.push(t);
-    }
+    // Calculate timestamps — spread across the full duration when the interval walk would
+    // exceed the frame budget (see computeSampleTimestamps).
+    const timestamps = computeSampleTimestamps(durationSec, intervalSec, maxFrames);
 
     if (timestamps.length === 0) {
       return {
         videoId: options.videoId,
         framesExtracted: 0,
+        framesFailed: 0,
         assets: [],
         durationMs: Date.now() - startMs,
       };
@@ -100,7 +133,7 @@ export class ThumbnailExtractor {
     );
 
     // Extract frames using seek-based approach (fast — seeks directly to each timestamp)
-    const assets = await this.extractFrames({
+    const { assets, framesFailed } = await this.extractFrames({
       videoId: options.videoId,
       videoPath,
       timestamps,
@@ -113,6 +146,7 @@ export class ThumbnailExtractor {
     return {
       videoId: options.videoId,
       framesExtracted: assets.length,
+      framesFailed,
       assets,
       durationMs: Date.now() - startMs,
     };
@@ -176,7 +210,7 @@ export class ThumbnailExtractor {
     imageFormat: string;
     width: number;
     existingByPath: Map<string, MediaAsset>;
-  }): Promise<MediaAsset[]> {
+  }): Promise<{ assets: MediaAsset[]; framesFailed: number }> {
     const CONCURRENCY = 4;
 
     const results = await poolMap(
@@ -224,7 +258,10 @@ export class ThumbnailExtractor {
       CONCURRENCY,
     );
 
-    return results.filter((asset): asset is MediaAsset => asset !== null);
+    const assets = results.filter((asset): asset is MediaAsset => asset !== null);
+    // Every null is a per-frame ffmpeg failure (skips return the existing asset, not null).
+    const framesFailed = results.length - assets.length;
+    return { assets, framesFailed };
   }
 }
 

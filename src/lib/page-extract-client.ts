@@ -1,5 +1,6 @@
 import { buildChannelUrl, buildVideoUrl, type ChannelRef } from "./id-parsing.js";
 import type { ChannelRecord, VideoRecord } from "./types.js";
+import { assertPublicHttpUrl } from "./url-guard.js";
 
 export class PageExtractClient {
   async getVideoInfo(videoId: string): Promise<VideoRecord> {
@@ -59,6 +60,9 @@ export class PageExtractClient {
   }
 
   private async fetchHtml(url: string): Promise<string> {
+    // SSRF guard: a channel ref can carry an arbitrary URL (parseChannelRef
+    // passes non-YouTube URLs verbatim), so refuse internal/metadata targets.
+    assertPublicHttpUrl(url);
     const response = await fetch(url, {
       headers: {
         "user-agent":

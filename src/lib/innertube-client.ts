@@ -8,6 +8,7 @@
  *       extract caption tracks → pick best track → fetch + parse XML → TranscriptRecord
  */
 
+import { fetchWithTimeout } from "./fetch-timeout.js";
 import type { TranscriptRecord, TranscriptSegment } from "./types.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -214,10 +215,12 @@ async function fetchWatchPageHtml(videoId: string, cookie?: string): Promise<str
     "User-Agent": USER_AGENT,
   };
   if (cookie) {
-    headers["Cookie"] = `${cookie}; Domain=.youtube.com`;
+    // `Domain=` is a Set-Cookie attribute, not valid inside a Cookie request
+    // header — send just the cookie pair.
+    headers["Cookie"] = cookie;
   }
 
-  const response = await fetch(`${WATCH_URL}${videoId}`, { headers });
+  const response = await fetchWithTimeout(`${WATCH_URL}${videoId}`, { headers });
   if (!response.ok) {
     throw new InnertubeError(
       `Failed to fetch watch page: HTTP ${response.status}`,
@@ -376,5 +379,5 @@ async function fetchWithHeaders(url: string, init?: RequestInit): Promise<Respon
   if (!headers.has("Accept-Language")) {
     headers.set("Accept-Language", "en-US");
   }
-  return fetch(url, { ...init, headers });
+  return fetchWithTimeout(url, { ...init, headers });
 }
