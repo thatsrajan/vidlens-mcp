@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-07-09
+
+Corruption-proofing release for the media store, driven by a real-world failure on an X video where the audio download overwrote the video asset. Hardened via adversarial cross-model review (5 additional findings fixed).
+
+### Fixed
+- **Media store corruption on X/TikTok**: video and audio downloads shared one output path (`{videoId}.%(ext)s`); on platforms where the audio rendition is fMP4 (ext `.mp4`), yt-dlp's resume behavior appended the audio stream onto the completed video file, corrupting both. Downloads are now format-scoped (`{videoId}.{format}.%(ext)s`) so no two formats can ever collide.
+- Downloads are validated with ffprobe before entering the manifest; unreadable files are deleted and reported with the real cause instead of poisoning keyframes/STT/duration downstream (validation is skipped only when ffprobe is not installed).
+- Corrupt or missing video/audio manifest rows are swept and purged (all rows sharing a file path, including legacy pre-1.4.1 entries with no recorded format) before cache checks, visual indexing, and keyframe extraction — existing corrupted stores self-heal on next use.
+- Concurrent downloads of the same video+format (e.g. transcription and visual indexing racing) now share a single in-flight download instead of deleting each other's output.
+- Stale leftovers matching a download's output template are removed before yt-dlp runs, including `.chunks/` sidecar directories left by a crashed transcription (previously a permanent hard failure once present).
+- Local file ingestion never deletes the user's source file, and self-heals stale corrupt copies by re-copying/re-extracting instead of failing until manual cleanup.
+- STT chunker now throws a diagnostic error when audio is over the provider size limit and its duration can't be probed (likely corrupt), instead of sending it to the provider for an opaque API error.
+- STT provider-selection errors name the actual gap (missing whisper.cpp binary/model, missing API key) and state explicitly that it's a machine/env configuration issue, not a problem with the video.
+
 ## [1.4.0] - 2026-07-08
 
 Full-codebase review and repair release: ~50 findings fixed across every subsystem by a coordinated multi-agent pass, plus a new cross-session memory tool. Test suite grew from ~126 to 402 cases.
