@@ -300,6 +300,22 @@ export class MediaStore {
   }
 
   /**
+   * Remove every asset row that points at the given file path — across all
+   * videos, not just one — then optionally delete the file once. Stores written
+   * before format-scoped download filenames could register multiple rows (e.g.
+   * a video and an audio asset) against a single file, so purging a corrupt
+   * file must take all of its rows with it or the survivors keep serving a
+   * path that no longer exists.
+   */
+  removeAssetsByFilePath(filePath: string, deleteFile = true): number {
+    const { changes } = this.db.prepare("DELETE FROM media_assets WHERE file_path = ?").run(filePath);
+    if (deleteFile && existsSync(filePath)) {
+      unlinkSync(filePath);
+    }
+    return Number(changes);
+  }
+
+  /**
    * Remove all assets for a given video.
    */
   removeVideoAssets(videoId: string, deleteFiles = true): number {

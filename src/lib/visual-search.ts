@@ -437,6 +437,9 @@ export class VisualSearchEngine {
     }
 
     let autoDownloaded = false;
+    // Purge corrupt/missing rows first: findVideoAsset picks by kind alone, so
+    // without this a corrupt legacy file would be handed straight to ffmpeg.
+    await this.mediaDownloader.sweepUnreadableAssets(videoId);
     let videoAssetPath = this.findVideoAsset(videoId)?.filePath;
     if (!videoAssetPath && (params.autoDownload ?? true)) {
       const download = await this.mediaDownloader.download({

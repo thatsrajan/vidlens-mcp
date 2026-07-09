@@ -53,6 +53,21 @@ test("chunkAudioForStt returns a single passthrough chunk when under the cap", a
   }
 });
 
+test("chunkAudioForStt throws a diagnostic error when over the cap and duration is unmeasurable", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "vidlens-chunk-corrupt-"));
+  try {
+    const audio = join(dir, "big.m4a");
+    writeFileSync(audio, Buffer.alloc(2048));
+    // `false` exits non-zero, simulating ffprobe failing on a corrupt file.
+    await assert.rejects(
+      () => chunkAudioForStt(audio, { maxBytes: 1024, ffprobeBinary: "false" }),
+      /could not measure its duration/,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("cleanupChunks removes generated chunk dirs but leaves the source file", () => {
   const dir = mkdtempSync(join(tmpdir(), "vidlens-chunk-clean-"));
   try {
