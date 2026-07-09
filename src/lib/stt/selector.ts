@@ -28,7 +28,13 @@ export function selectSttProvider(
       return { provider: whisper, providerId: "whisper-cpp", details: ["Selected local whisper.cpp provider."] };
     }
     if (requested === "whisper-cpp") {
-      return { provider: null, providerId: "none", details: ["whisper.cpp selected but binary/model was not found."] };
+      return {
+        provider: null,
+        providerId: "none",
+        details: [
+          "whisper.cpp selected but it is not installed on this machine: it needs a whisper-cli (or whisper.cpp) binary on PATH and VIDLENS_WHISPER_MODEL_PATH pointing to a model file.",
+        ],
+      };
     }
   }
 
@@ -54,7 +60,13 @@ export function selectSttProvider(
     return { provider: null, providerId: "none", details: ["OpenAI STT selected but OPENAI_API_KEY is not set."] };
   }
 
-  return { provider: null, providerId: "none", details: ["No STT provider configured."] };
+  return {
+    provider: null,
+    providerId: "none",
+    details: [
+      "No STT provider configured: install whisper.cpp (whisper-cli on PATH + VIDLENS_WHISPER_MODEL_PATH), or set GEMINI_API_KEY/GOOGLE_API_KEY or OPENAI_API_KEY.",
+    ],
+  };
 }
 
 function normalizeSelection(value: string | undefined): SttSelection {

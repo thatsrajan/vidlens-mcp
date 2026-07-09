@@ -2016,7 +2016,7 @@ export class YouTubeService {
 
     const selection = selectSttProvider(process.env, input.sttProvider);
     if (!selection.provider) {
-      throw this.invalidInput(`No STT provider configured for ${source.platform}. ${selection.details.join(" ")}`);
+      throw this.invalidInput(`No STT provider available (requested: ${input.sttProvider ?? "auto"}). This is a machine/env configuration gap, not a problem with the video. ${selection.details.join(" ")}`);
     }
 
     const audioAsset = await this.ensureAudioAsset(input.source);
@@ -2053,8 +2053,8 @@ export class YouTubeService {
           sourceId: source.sourceId,
           canonicalUrl: source.canonicalUrl,
           kind,
-          filePath: join(this.mediaStore.videoDir(videoId), kind === "thumbnail" ? `${videoId}-thumb.${extension}` : `${videoId}.${extension}`),
-          fileName: kind === "thumbnail" ? `${videoId}-thumb.${extension}` : `${videoId}.${extension}`,
+          filePath: join(this.mediaStore.videoDir(videoId), kind === "thumbnail" ? `${videoId}-thumb.${extension}` : `${videoId}.${input.format}.${extension}`),
+          fileName: kind === "thumbnail" ? `${videoId}-thumb.${extension}` : `${videoId}.${input.format}.${extension}`,
           fileSizeBytes: 0,
           mimeType: kind === "thumbnail" ? "image/jpeg" : kind === "audio" ? "audio/mp4" : "video/mp4",
         },
@@ -2096,11 +2096,9 @@ export class YouTubeService {
 	  }
 
   private async ensureAudioAsset(sourceInput: string) {
-    const source = resolveVideoSource(sourceInput);
-    const existing = this.mediaStore.listAssetsForVideo(source.assetKey).find((asset) => asset.kind === "audio");
-    if (existing) {
-      return existing;
-    }
+    // Always go through the downloader: its cache check dedupes existing audio
+    // assets AND validates the file with ffprobe, replacing corrupt entries
+    // instead of handing them to STT providers (which surface opaque errors).
     const downloaded = await this.downloadAsset({
       videoIdOrUrl: sourceInput,
       format: "best_audio",
@@ -2267,7 +2265,10 @@ export class YouTubeService {
       };
     }
 
-    const hasVideoAsset = this.mediaStore.listAssetsForVideo(videoId).some((asset) => asset.kind === "video");
+    // Sweep first: the extractor picks the video file by kind alone, and a
+    // corrupt legacy row would otherwise be handed straight to ffmpeg.
+    const swept = await this.mediaDownloader.sweepUnreadableAssets(videoId);
+    const hasVideoAsset = swept.some((asset) => asset.kind === "video");
     if (!hasVideoAsset && source.platform === "local_file") {
       await this.mediaDownloader.download({
         videoIdOrUrl: input.videoIdOrUrl,
@@ -3541,7 +3542,7 @@ export class YouTubeService {
     }
     const selection = selectSttProvider(process.env);
     if (!selection.provider) {
-      throw new Error(`No STT provider configured for ${source.platform}. ${selection.details.join(" ")}`);
+      throw new Error(`No STT provider available. This is a machine/env configuration gap, not a problem with the video. ${selection.details.join(" ")}`);
     }
     const audioAsset = await this.ensureAudioAsset(source.input);
     const result = await selection.provider.transcribe(audioAsset.filePath, {

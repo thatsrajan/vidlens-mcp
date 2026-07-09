@@ -42,9 +42,17 @@ export async function chunkAudioForStt(audioPath: string, options: ChunkAudioOpt
   if (stat.size <= maxBytes) {
     return [{ path: audioPath, startSec: 0, durationSec }];
   }
-  // Over the cap but we can't measure duration — nothing to base chunk boundaries on.
+  // Over the cap but we can't measure duration — nothing to base chunk
+  // boundaries on. Passing the oversized file through would just make the
+  // provider reject it with an opaque API error, so fail here with the cause.
   if (!durationSec || durationSec <= 0) {
-    return [{ path: audioPath, startSec: 0, durationSec }];
+    const sizeMb = Math.round(stat.size / (1024 * 1024));
+    const capMb = Math.round(maxBytes / (1024 * 1024));
+    throw new Error(
+      `Audio file is ${sizeMb} MB (provider limit ${capMb} MB per request) and ffprobe could not ` +
+      `measure its duration to split it into chunks. The file may be corrupt or ffprobe may be ` +
+      `missing — verify the file plays, or remove the asset and re-download it, then retry.`,
+    );
   }
 
   const chunkDurationSec = deriveChunkDurationSec(stat.size, durationSec, maxBytes, options.chunkDurationSec);
