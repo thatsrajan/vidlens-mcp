@@ -38,18 +38,24 @@ export async function chunkAudioForStt(audioPath: string, options: ChunkAudioOpt
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
   const stat = statSync(audioPath);
   const durationSec = await probeDuration(audioPath, options.ffprobeBinary ?? "ffprobe");
-  // Anything already under the cap is fine as a single chunk regardless of duration.
-  if (stat.size <= maxBytes) {
+  const exceedsDurationCap = Boolean(
+    options.chunkDurationSec &&
+    durationSec &&
+    durationSec > options.chunkDurationSec,
+  );
+  // A provider may impose both byte and duration limits. Only pass the original
+  // through when it fits both; low-bitrate long recordings still need splitting.
+  if (stat.size <= maxBytes && !exceedsDurationCap) {
     return [{ path: audioPath, startSec: 0, durationSec }];
   }
-  // Over the cap but we can't measure duration — nothing to base chunk
+  // Over a provider cap but we can't measure duration — nothing to base chunk
   // boundaries on. Passing the oversized file through would just make the
   // provider reject it with an opaque API error, so fail here with the cause.
   if (!durationSec || durationSec <= 0) {
     const sizeMb = Math.round(stat.size / (1024 * 1024));
     const capMb = Math.round(maxBytes / (1024 * 1024));
     throw new Error(
-      `Audio file is ${sizeMb} MB (provider limit ${capMb} MB per request) and ffprobe could not ` +
+      `Audio file exceeds a provider request limit (${sizeMb} MB; byte limit ${capMb} MB) and ffprobe could not ` +
       `measure its duration to split it into chunks. The file may be corrupt or ffprobe may be ` +
       `missing — verify the file plays, or remove the asset and re-download it, then retry.`,
     );

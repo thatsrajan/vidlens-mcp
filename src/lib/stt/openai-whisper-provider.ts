@@ -9,6 +9,9 @@ import { withRetry } from "../retry.js";
 
 // OpenAI caps the transcription upload at 26 MB; leave headroom for multipart overhead.
 const OPENAI_MAX_CHUNK_BYTES = 24 * 1024 * 1024;
+// gpt-4o-transcribe rejects audio longer than 1,400 seconds. Keep a generous
+// margin so container/probe rounding cannot push a chunk over the API limit.
+const OPENAI_MAX_CHUNK_DURATION_SEC = 20 * 60;
 const OPENAI_REQUEST_TIMEOUT_MS = 120_000;
 
 export class OpenAiWhisperProvider implements SttProvider {
@@ -21,7 +24,10 @@ export class OpenAiWhisperProvider implements SttProvider {
   ) {}
 
   async transcribe(audioPath: string, options: SttTranscribeOptions = {}): Promise<SttTranscriptionResult> {
-    const chunks = await chunkAudioForStt(audioPath, { maxBytes: OPENAI_MAX_CHUNK_BYTES });
+    const chunks = await chunkAudioForStt(audioPath, {
+      maxBytes: OPENAI_MAX_CHUNK_BYTES,
+      chunkDurationSec: OPENAI_MAX_CHUNK_DURATION_SEC,
+    });
     try {
       const transcripts: TranscriptRecord[] = [];
       for (let index = 0; index < chunks.length; index += 1) {

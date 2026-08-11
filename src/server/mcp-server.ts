@@ -342,7 +342,7 @@ export const tools: Tool[] = [
   },
   {
     name: "checkSystemHealth",
-    description: "Check setup and provider health: yt-dlp, YouTube API, Gemini embeddings, and local storage. [~3-10s]",
+    description: "Check setup and provider health: yt-dlp, YouTube API, Gemini embeddings, ScrapeCreators/X discovery, web fallback, and local storage. [~3-10s]",
     inputSchema: {
       type: "object",
       properties: {

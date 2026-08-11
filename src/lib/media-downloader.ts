@@ -25,6 +25,11 @@ export interface DownloadOptions {
   outputDir?: string;
   /** Max file size in MB. Downloads exceeding this are rejected. Default: 500 */
   maxSizeMb?: number;
+  /**
+   * Internal recovery path: retrieve bytes from this public media URL while
+   * retaining videoIdOrUrl as the canonical source identity in the store.
+   */
+  resolvedMediaUrl?: string;
 }
 
 export interface DownloadResult {
@@ -73,7 +78,8 @@ export class MediaDownloader {
 
   private async performDownload(source: VideoSourceRef, options: DownloadOptions): Promise<DownloadResult> {
     const videoId = source.assetKey;
-    const url = source.localPath ?? source.canonicalUrl;
+    const url = options.resolvedMediaUrl ?? source.localPath ?? source.canonicalUrl;
+    const usesResolvedMedia = Boolean(options.resolvedMediaUrl);
     const outDir = options.outputDir ?? this.store.videoDir(videoId);
     const maxSizeMb = clampMaxSizeMb(options.maxSizeMb);
     const startMs = Date.now();
@@ -131,8 +137,8 @@ export class MediaDownloader {
       "--no-warnings",
       "--no-playlist",
       "--no-part",
-      ...this.ytDlpAuthArgs(source),
-      ...extractorArgsForPlatform(source.platform),
+      ...(usesResolvedMedia ? [] : this.ytDlpAuthArgs(source)),
+      ...(usesResolvedMedia ? [] : extractorArgsForPlatform(source.platform)),
       "-f", formatArg,
       "--max-filesize", `${maxSizeMb}M`,
       "-o", outputTemplate,
@@ -142,6 +148,9 @@ export class MediaDownloader {
     try {
       await execa(this.ytdlpBinary, args, { timeout: 300_000, reject: true });
     } catch (error) {
+      if (usesResolvedMedia) {
+        throw new Error(`yt-dlp download failed for ${videoId} using the resolved X media URL.`);
+      }
       const message = redactError(error);
       throw new Error(`yt-dlp download failed for ${videoId}: ${message}`);
     }
@@ -173,8 +182,8 @@ export class MediaDownloader {
     try {
       const { stdout } = await execa(this.ytdlpBinary, [
         "--dump-single-json", "--skip-download", "--no-warnings",
-        ...this.ytDlpAuthArgs(source),
-        ...extractorArgsForPlatform(source.platform),
+        ...(usesResolvedMedia ? [] : this.ytDlpAuthArgs(source)),
+        ...(usesResolvedMedia ? [] : extractorArgsForPlatform(source.platform)),
         url,
       ], { timeout: 30_000 });
       const meta = JSON.parse(stdout) as { duration?: number; title?: string; extractor?: string; webpage_url?: string };
@@ -184,9 +193,10 @@ export class MediaDownloader {
       metadata = compactMeta({
         title: meta.title,
         extractor: meta.extractor,
-        webpageUrl: meta.webpage_url,
+        webpageUrl: usesResolvedMedia ? undefined : meta.webpage_url,
         sourceInput: options.videoIdOrUrl,
         format: options.format,
+        retrievalFallback: usesResolvedMedia ? "scrapecreators_x_tweet" : undefined,
       });
     } catch {
       // Metadata dump is non-critical, but still record the requested format so

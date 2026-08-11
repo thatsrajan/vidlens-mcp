@@ -732,6 +732,23 @@ export interface CheckSystemHealthOutput {
     openaiConfigured?: boolean;
     braveConfigured?: boolean;
     serpapiConfigured?: boolean;
+    scrapeCreatorsConfigured: boolean;
+  };
+  xDiscovery: {
+    scrapeCreators: {
+      configured: boolean;
+      available: boolean;
+      capability: "handle_profile_lookup";
+      generalKeywordSearch: false;
+      liveProbe: "not_run";
+      detail: string;
+    };
+    webFallback: {
+      selectedProvider: WebSearchProviderId | "none";
+      available: boolean;
+      capability: "keyword_and_creator_discovery";
+      detail: string;
+    };
   };
   platforms?: Array<{
     platform: VideoSourcePlatform;
