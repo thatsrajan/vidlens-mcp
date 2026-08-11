@@ -31,6 +31,32 @@ searchable.
 
 Re-importing what you already have wastes time and burns API quota.
 
+## Latest video from an X creator
+
+For requests such as "summarize Riley Brown's latest X video":
+
+1. Run `recallWorkspace`, then search existing transcripts/assets for the creator or handle.
+   Reuse the exact post if it is already stored.
+2. Resolve a display name to the creator's canonical `@handle` from their X profile or a
+   reliable web result. Do not pass a display name to X discovery and guess that it is a handle.
+3. If ScrapeCreators is configured, call `searchSocialTrends` with `query: "@handle"`,
+   `platforms: ["x"]`, `sort: "recent"`, and a suitable freshness window. X support is a
+   handle-based profile-tweets endpoint, **not general X keyword search**.
+4. If that call is unavailable, partial, or empty, use `searchVideoSources` with the handle,
+   creator name, and `platforms: ["x"]`; public web search is also an acceptable discovery
+   fallback. Prefer canonical `x.com/<handle>/status/<id>` URLs.
+5. Verify "latest" from post timestamps and the profile author. Choose the newest **original
+   post containing playable video**, excluding reposts/retweets, replies that merely quote
+   another creator's video, pinned older posts, and text-only posts. Say when the evidence is
+   incomplete rather than claiming certainty.
+6. Pass the selected post's exact status URL to `transcribeVideoSource`, then summarize the
+   returned transcript (not just the X caption). Include the post URL and date in the answer.
+
+`SCRAPECREATORS_API_KEY` must be present in the environment of the running MCP server. A value
+in the repository `.env` does not guarantee that an already-running Codex/Claude MCP process
+inherited it. Check only whether the variable is set, never print or log its value; update the
+MCP launcher's env/config if needed, restart the MCP server/client, and verify capability again.
+
 ## readTranscript vs importVideos — cheap one-off vs durable library
 
 - **`readTranscript`** — a cheap, one-shot fetch of a single video's transcript. Use when you
@@ -53,6 +79,9 @@ VidLens is designed to work with **zero API keys**:
   descriptions (needed for visual descriptions on non-macOS). Without it, transcript embeddings
   are local (LSA) and visual indexing relies on Apple Vision OCR.
 - **`OPENAI_API_KEY`:** OpenAI speech-to-text for sources without native captions.
+- **`SCRAPECREATORS_API_KEY`:** direct social discovery, including handle-based X profile
+  retrieval. Without it, use `searchVideoSources`/public-web discovery and transcribe the exact
+  discovered post URL.
 
 Provenance in every tool result reports which tier answered, so degraded answers are visible,
 not silent.

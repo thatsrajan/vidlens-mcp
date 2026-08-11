@@ -4,6 +4,7 @@ import type {
   SocialSearchPlatform,
   SocialTrendResult,
 } from "./types.js";
+import { assertPublicHttpUrl } from "./url-guard.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -13,6 +14,15 @@ interface EndpointPlan {
   params: Record<string, string | number | boolean | undefined>;
   detail: string;
 }
+
+export interface ResolvedXMedia {
+  url: string;
+  bitrate?: number;
+  contentType: "video/mp4";
+}
+
+const X_POPULAR_SAMPLE_LIMITATION =
+  "X user-tweets returns a sample of popular tweets, not a chronological latest-tweets feed. Treat sort=recent as newest within that sample only, and verify the actual latest post through chronological X/web discovery.";
 
 export class ScrapeCreatorsClient {
   constructor(
@@ -43,6 +53,10 @@ export class ScrapeCreatorsClient {
         continue;
       }
 
+      if (platform === "x") {
+        limitations.push(X_POPULAR_SAMPLE_LIMITATION);
+      }
+
       try {
         const data = await this.get(plan.endpoint, plan.params);
         const normalized = normalizeResults(platform, data, input.includeRaw === true).slice(0, maxResults);
@@ -70,6 +84,39 @@ export class ScrapeCreatorsClient {
     };
   }
 
+  /**
+   * Resolve an individual public X status to its best MP4 rendition. The raw
+   * tweet payload is intentionally kept inside this client: callers receive
+   * only the selected public media URL and its bitrate.
+   */
+  async resolveXMedia(tweetUrl: string): Promise<ResolvedXMedia> {
+    const source = new URL(tweetUrl);
+    const host = source.hostname.toLowerCase().replace(/^www\./, "");
+    if (source.protocol !== "https:" || (host !== "x.com" && host !== "twitter.com")) {
+      throw new Error("ScrapeCreators X media resolution requires an https://x.com or https://twitter.com status URL.");
+    }
+    if (!/(?:^|\/)status(?:es)?\/\d+(?:\/|$)/.test(source.pathname)) {
+      throw new Error("ScrapeCreators X media resolution requires a status URL containing a numeric tweet ID.");
+    }
+
+    const data = await this.get("/v1/twitter/tweet", { url: tweetUrl, trim: false });
+    const variants = primaryXMediaRoots(data).flatMap(collectMp4Variants)
+      .filter((variant) => {
+        try {
+          assertPublicHttpUrl(variant.url);
+          return true;
+        } catch {
+          return false;
+        }
+      })
+      .sort((a, b) => (b.bitrate ?? -1) - (a.bitrate ?? -1));
+    const selected = variants[0];
+    if (!selected) {
+      throw new Error("ScrapeCreators tweet response did not include a public MP4 media variant.");
+    }
+    return selected;
+  }
+
   private async get(path: string, params: Record<string, string | number | boolean | undefined>): Promise<JsonObject> {
     const url = new URL(path, this.baseUrl);
     for (const [key, value] of Object.entries(params)) {
@@ -90,6 +137,70 @@ export class ScrapeCreatorsClient {
   }
 }
 
+function primaryXMediaRoots(data: JsonObject): unknown[] {
+  const envelopes = [
+    data,
+    objectAt(data, "data"),
+    objectAt(data, "tweet"),
+    objectAt(objectAt(data, "data"), "tweet"),
+    objectAt(objectAt(data, "tweetResult"), "result"),
+    objectAt(objectAt(objectAt(data, "data"), "tweetResult"), "result"),
+  ].filter((value): value is JsonObject => Boolean(value));
+  const roots: unknown[] = [];
+  for (const envelope of envelopes) {
+    const legacy = objectAt(envelope, "legacy");
+    const extended = objectAt(legacy, "extended_entities") ?? objectAt(envelope, "extended_entities");
+    if (extended) roots.push(extended);
+  }
+  // Unknown response envelopes still get a bounded compatibility scan. Known
+  // envelopes stay scoped to the primary tweet so a quoted tweet's larger
+  // rendition cannot be selected by accident.
+  return roots.length > 0 ? roots : [data];
+}
+
+function collectMp4Variants(root: unknown): ResolvedXMedia[] {
+  const found = new Map<string, ResolvedXMedia>();
+  const pending: unknown[] = [root];
+  let visited = 0;
+
+  while (pending.length > 0 && visited < 20_000) {
+    const value = pending.pop();
+    visited += 1;
+    if (Array.isArray(value)) {
+      pending.push(...value);
+      continue;
+    }
+    if (!value || typeof value !== "object") continue;
+
+    const item = value as JsonObject;
+    const url = stringAt(item, "url") ?? stringAt(item, "src");
+    const contentType = (stringAt(item, "content_type") ?? stringAt(item, "contentType") ?? stringAt(item, "type"))?.toLowerCase();
+    if (url && (contentType === "video/mp4" || isMp4Url(url))) {
+      const rawBitrate = numberAt(item, "bitrate") ?? numberAt(item, "bit_rate");
+      const candidate: ResolvedXMedia = {
+        url,
+        bitrate: rawBitrate,
+        contentType: "video/mp4",
+      };
+      const existing = found.get(url);
+      if (!existing || (candidate.bitrate ?? -1) > (existing.bitrate ?? -1)) {
+        found.set(url, candidate);
+      }
+    }
+    pending.push(...Object.values(item));
+  }
+
+  return [...found.values()];
+}
+
+function isMp4Url(value: string): boolean {
+  try {
+    return new URL(value).pathname.toLowerCase().endsWith(".mp4");
+  } catch {
+    return false;
+  }
+}
+
 export const DEFAULT_SOCIAL_PLATFORMS: SocialSearchPlatform[] = ["tiktok", "instagram", "threads", "pinterest", "reddit", "x"];
 
 export function buildSocialPlaylist(query: string, results: SocialTrendResult[]): SearchSocialTrendsOutput["playlist"] {
@@ -99,6 +210,22 @@ export function buildSocialPlaylist(query: string, results: SocialTrendResult[])
     importableUrls: results.filter((item) => item.importableVideoSource).map((item) => item.url),
     platforms: Array.from(new Set(results.map((item) => item.platform))),
   };
+}
+
+export function sortSocialTrendResults(
+  results: SocialTrendResult[],
+  sort: SearchSocialTrendsInput["sort"] = "engagement",
+): SocialTrendResult[] {
+  if (sort === "relevance") {
+    return [...results];
+  }
+  if (sort === "recent") {
+    return [...results].sort((a, b) => {
+      const dateDifference = sortableDate(b.publishedAt) - sortableDate(a.publishedAt);
+      return dateDifference || (b.score ?? 0) - (a.score ?? 0);
+    });
+  }
+  return [...results].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
 }
 
 export function sampleSocialTrends(input: SearchSocialTrendsInput): Pick<SearchSocialTrendsOutput, "results" | "searched" | "limitations"> {
@@ -182,8 +309,10 @@ function buildEndpointPlan(platform: SocialSearchPlatform, input: SearchSocialTr
       return {
         platform,
         endpoint: "/v1/twitter/user-tweets",
-        params: { handle, trim: true },
-        detail: `Fetched popular X tweets for @${handle} through ScrapeCreators`,
+        // The trimmed response omits core.user_results on current ScrapeCreators
+        // responses, which removes the screen name needed to build canonical URLs.
+        params: { handle, trim: false },
+        detail: `Fetched a popular-tweets sample for @${handle} through ScrapeCreators; this endpoint is not a chronological latest-tweets feed`,
       };
     }
   }
@@ -361,7 +490,8 @@ function normalizeTweet(item: JsonObject, includeRaw: boolean): SocialTrendResul
   const legacy = objectAt(item, "legacy");
   const user = objectAt(objectAt(objectAt(item, "core"), "user_results"), "result");
   const userLegacy = objectAt(user, "legacy");
-  const handle = stringAt(userLegacy, "screen_name");
+  const itemUrl = stringAt(item, "url");
+  const handle = stringAt(userLegacy, "screen_name") ?? handleFromXUrl(itemUrl);
   if (!id || !handle) return undefined;
   return cleanResult({
     platform: "x",
@@ -384,6 +514,12 @@ function normalizeTweet(item: JsonObject, includeRaw: boolean): SocialTrendResul
     matchReason: "Matched by ScrapeCreators X user tweets endpoint.",
     raw: includeRaw ? item : undefined,
   });
+}
+
+function handleFromXUrl(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const match = value.match(/^https?:\/\/(?:www\.)?(?:x|twitter)\.com\/([A-Za-z0-9_]{1,30})\/status\//i);
+  return match?.[1];
 }
 
 function sampleResult(platform: SocialSearchPlatform, query: string, index: number): SocialTrendResult[] {
@@ -468,6 +604,12 @@ function dateFrom(value: JsonObject, ...keys: string[]): string | undefined {
     }
   }
   return undefined;
+}
+
+function sortableDate(value: string | undefined): number {
+  if (!value) return Number.NEGATIVE_INFINITY;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
 }
 
 function firstUrl(value: JsonObject | undefined): string | undefined {

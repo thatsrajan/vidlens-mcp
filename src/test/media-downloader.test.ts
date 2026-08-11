@@ -109,6 +109,29 @@ test("video and audio downloads of the same post never share a file (X fMP4 coll
   });
 });
 
+test("resolved X media downloads retain the original status identity and do not persist the CDN URL", async () => {
+  await withStore(async (store) => {
+    const ytdlp = writeFakeYtdlp(store.dataDir);
+    const ffprobe = writeFakeFfprobe(store.dataDir);
+    const downloader = new MediaDownloader(store, ytdlp, undefined, ffprobe);
+    const directUrl = "https://video.twimg.com/ext_tw_video/2074907025537224840/pu/vid/1280x720/demo.mp4?token=signed";
+
+    const result = await downloader.download({
+      videoIdOrUrl: X_URL,
+      format: "best_audio",
+      resolvedMediaUrl: directUrl,
+    });
+    const original = resolveVideoSource(X_URL);
+
+    assert.equal(result.asset.videoId, original.assetKey);
+    assert.equal(result.asset.sourcePlatform, "x");
+    assert.equal(result.asset.sourceId, original.sourceId);
+    assert.equal(result.asset.canonicalUrl, original.canonicalUrl);
+    assert.equal(result.asset.meta?.retrievalFallback, "scrapecreators_x_tweet");
+    assert.equal(JSON.stringify(result.asset).includes(directUrl), false);
+  });
+});
+
 test("unreadable downloads are rejected, deleted, and never registered", async () => {
   await withStore(async (store) => {
     const ytdlp = writeFakeYtdlp(store.dataDir);

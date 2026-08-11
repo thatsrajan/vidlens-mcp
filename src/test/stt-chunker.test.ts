@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { chunkAudioForStt, cleanupChunks, deriveChunkDurationSec, type AudioChunk } from "../lib/stt/chunker.js";
 
+const canRunFfmpeg = onPath("ffmpeg") && onPath("ffprobe");
+
 test("deriveChunkDurationSec keeps each chunk under the byte cap", () => {
   // 26 MB over 240 s ≈ 113.8 KB/s; a 20 MB cap must yield chunks shorter than the file.
   const sizeBytes = 26 * 1024 * 1024;
@@ -48,6 +50,31 @@ test("chunkAudioForStt returns a single passthrough chunk when under the cap", a
     assert.equal(chunks[0]!.startSec, 0);
     // A passthrough chunk must not create a temp dir to clean up.
     assert.ok(!existsSync(`${audio}.chunks`));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("chunkAudioForStt splits low-bitrate audio that exceeds a duration cap", { skip: !canRunFfmpeg }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "vidlens-chunk-duration-"));
+  try {
+    const audio = join(dir, "long-low-bitrate.m4a");
+    execFileSync("ffmpeg", [
+      "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=4",
+      "-c:a", "aac", "-b:a", "32k", audio,
+    ], { stdio: "ignore" });
+    assert.ok(statSync(audio).size < 24 * 1024 * 1024, "fixture should fit the byte cap");
+
+    const chunks = await chunkAudioForStt(audio, {
+      maxBytes: 24 * 1024 * 1024,
+      chunkDurationSec: 2,
+    });
+    try {
+      assert.equal(chunks.length, 2, "duration cap should split an otherwise small file");
+      assert.ok(chunks.every((chunk) => (chunk.durationSec ?? 0) <= 2));
+    } finally {
+      cleanupChunks(chunks, audio);
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -108,8 +135,6 @@ test("cleanupChunks is a no-op for passthrough chunks", () => {
 // Integration: a real high-bitrate WAV over a small cap must split into multiple
 // chunks that each stay under the cap, and cleanup must remove the temp dir. Skips
 // unless ffmpeg + ffprobe are present so CI without them stays green.
-const canRunFfmpeg = onPath("ffmpeg") && onPath("ffprobe");
-
 test("chunkAudioForStt splits a large file into sub-cap chunks", { skip: !canRunFfmpeg }, async () => {
   const dir = mkdtempSync(join(tmpdir(), "vidlens-chunk-int-"));
   try {

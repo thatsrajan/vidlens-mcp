@@ -102,6 +102,11 @@ test("V1 and V2 tools return structured dry-run outputs", async () => {
   assert.equal(dossier.comments?.totalFetched, 3);
   assert.equal(dossier.audienceSentiment !== undefined, true);
   assert.equal(systemHealth.overallStatus, "ready");
+  assert.equal(typeof systemHealth.keys.scrapeCreatorsConfigured, "boolean");
+  assert.equal(systemHealth.xDiscovery.scrapeCreators.capability, "handle_profile_lookup");
+  assert.equal(systemHealth.xDiscovery.scrapeCreators.generalKeywordSearch, false);
+  assert.equal(systemHealth.xDiscovery.scrapeCreators.liveProbe, "not_run");
+  assert.equal(systemHealth.xDiscovery.webFallback.capability, "keyword_and_creator_discovery");
   assert.equal(visualIndex.videoId, sampleVideo);
   assert.equal(visualIndex.indexing.framesIndexed, 3);
   assert.equal(visualIndex.indexing.embeddingProvider, "gemini");

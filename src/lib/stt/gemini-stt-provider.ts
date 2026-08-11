@@ -108,7 +108,7 @@ function readGeminiText(response: unknown): string {
   throw new Error("Gemini STT response did not include transcript text.");
 }
 
-function mimeTypeFor(path: string): string {
+export function mimeTypeFor(path: string): string {
   switch (extname(path).toLowerCase()) {
     case ".mp3":
       return "audio/mpeg";
@@ -117,7 +117,10 @@ function mimeTypeFor(path: string): string {
     case ".webm":
       return "audio/webm";
     case ".mp4":
-      return "video/mp4";
+      // STT receives the downloader's best_audio asset. Social extractors often
+      // store that audio-only stream in an MP4 container, so declaring it as
+      // video makes Gemini reject it with "0 Frames found".
+      return "audio/mp4";
     case ".m4a":
     default:
       return "audio/mp4";

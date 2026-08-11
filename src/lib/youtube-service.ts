@@ -37,7 +37,12 @@ import { assessYtDlpFreshness, fetchLatestYtDlpVersion } from "./diagnostics/yt-
 import { probeJsRuntime } from "./diagnostics/js-runtime.js";
 import { allProviders, providerForSource } from "./providers/registry.js";
 import { redactError, redactSecrets } from "./redactor.js";
-import { ScrapeCreatorsClient, buildSocialPlaylist, sampleSocialTrends } from "./scrapecreators-client.js";
+import {
+  ScrapeCreatorsClient,
+  buildSocialPlaylist,
+  sampleSocialTrends,
+  sortSocialTrendResults,
+} from "./scrapecreators-client.js";
 import { selectSttProvider } from "./stt/selector.js";
 import { selectWebSearchProvider } from "./web-search/selector.js";
 import {
@@ -163,6 +168,7 @@ import { resolveVideoSource, type VideoSourceRef } from "./video-source.js";
 interface YouTubeServiceConfig {
   apiKey?: string;
   scrapeCreatorsApiKey?: string;
+  scrapeCreatorsFetch?: typeof fetch;
   dryRun?: boolean;
   ytDlpBinary?: string;
   dataDir?: string;
@@ -212,6 +218,7 @@ export class YouTubeService {
   private readonly dataDir: string;
   private readonly ytDlpBinary?: string;
   private readonly scrapeCreatorsApiKey?: string;
+  private readonly scrapeCreatorsFetch: typeof fetch;
   private _knowledgeBase?: TranscriptKnowledgeBase;
   private _commentKnowledgeBase?: CommentKnowledgeBase;
   private _mediaStore?: MediaStore;
@@ -230,6 +237,7 @@ export class YouTubeService {
     this.dataDir = config.dataDir ?? defaultServiceDataDir();
     this.ytDlpBinary = config.ytDlpBinary;
     this.scrapeCreatorsApiKey = config.scrapeCreatorsApiKey ?? process.env.SCRAPECREATORS_API_KEY;
+    this.scrapeCreatorsFetch = config.scrapeCreatorsFetch ?? fetch;
   }
 
   private get knowledgeBase(): TranscriptKnowledgeBase {
@@ -1187,6 +1195,7 @@ export class YouTubeService {
     const openaiConfigured = Boolean(process.env.OPENAI_API_KEY);
     const braveConfigured = Boolean(process.env.BRAVE_API_KEY);
     const serpapiConfigured = Boolean(process.env.SERPAPI_KEY);
+    const scrapeCreatorsConfigured = Boolean(this.scrapeCreatorsApiKey);
     const sttSelection = selectSttProvider(process.env);
     const webSearchSelection = selectWebSearchProvider(process.env);
     const cookieStore = new CookieStore();
@@ -1272,6 +1281,16 @@ export class YouTubeService {
       status: webSearchSelection.provider ? "ok" : "skipped",
       detail: webSearchSelection.details.join(" "),
     });
+    checks.push({
+      name: "scrapecreators",
+      status: scrapeCreatorsConfigured ? "ok" : "skipped",
+      detail: scrapeCreatorsConfigured
+        ? "SCRAPECREATORS_API_KEY is configured. X handle/profile lookup is available; no live probe was run because the mapped profile endpoint consumes an API request. General X keyword search is not provided by ScrapeCreators."
+        : "SCRAPECREATORS_API_KEY is not configured. X handle/profile lookup is unavailable; web-search fallback may still discover public X posts.",
+    });
+    if (!scrapeCreatorsConfigured) {
+      suggestions.push("Add SCRAPECREATORS_API_KEY to the MCP process environment for direct X handle/profile lookup and restart the MCP server. Public X discovery can still use the selected web-search fallback.");
+    }
 
     const providerContext = {
       ytDlpBinary: this.ytdlp.getBinary(),
@@ -1297,10 +1316,13 @@ export class YouTubeService {
             ? "degraded"
             : "ready"
           : "unsupported";
+      const searchDetail = provider.platform === "x"
+        ? `ScrapeCreators handle/profile lookup: ${scrapeCreatorsConfigured ? "configured" : "unavailable (SCRAPECREATORS_API_KEY not configured)"}; general keyword search via ScrapeCreators: unsupported; web fallback: ${webSearchSelection.provider ? `${webSearchSelection.providerId} available` : "unavailable"}`
+        : `${capabilities.search} search`;
       return {
         platform: provider.platform,
         status,
-        detail: `${capabilities.search} search; transcript: ${capabilities.transcriptMode ?? "unsupported"}; ${cookie.warning ?? cookieDetail}.`,
+        detail: `${searchDetail}; transcript: ${capabilities.transcriptMode ?? "unsupported"}; ${cookie.warning ?? cookieDetail}.`,
       };
     });
 
@@ -1418,6 +1440,25 @@ export class YouTubeService {
         openaiConfigured,
         braveConfigured,
         serpapiConfigured,
+        scrapeCreatorsConfigured,
+      },
+      xDiscovery: {
+        scrapeCreators: {
+          configured: scrapeCreatorsConfigured,
+          available: scrapeCreatorsConfigured,
+          capability: "handle_profile_lookup",
+          generalKeywordSearch: false,
+          liveProbe: "not_run",
+          detail: scrapeCreatorsConfigured
+            ? "Direct X lookup is available for @handle/profile queries. Credential presence was checked; the billable profile endpoint was not called."
+            : "Direct X @handle/profile lookup requires SCRAPECREATORS_API_KEY in the MCP process environment.",
+        },
+        webFallback: {
+          selectedProvider: webSearchSelection.providerId,
+          available: Boolean(webSearchSelection.provider),
+          capability: "keyword_and_creator_discovery",
+          detail: webSearchSelection.details.join(" "),
+        },
       },
       platforms,
       stt: {
@@ -1890,7 +1931,7 @@ export class YouTubeService {
     const social = this.isDryRun(options)
       ? sampleSocialTrends(normalizedInput)
       : this.scrapeCreatorsApiKey
-        ? await new ScrapeCreatorsClient(this.scrapeCreatorsApiKey).search(normalizedInput)
+        ? await new ScrapeCreatorsClient(this.scrapeCreatorsApiKey, this.scrapeCreatorsFetch).search(normalizedInput)
         : {
           results: [],
           searched: (normalizedInput.platforms?.length ? normalizedInput.platforms : ["tiktok", "instagram", "threads", "pinterest", "reddit", "x"] as const)
@@ -1902,9 +1943,7 @@ export class YouTubeService {
           limitations: ["SCRAPECREATORS_API_KEY is not configured."],
         };
 
-    const results = social.results
-      .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
-      .slice(0, maxResults);
+    const results = sortSocialTrendResults(social.results, normalizedInput.sort).slice(0, maxResults);
 
     return {
       query,
@@ -2065,11 +2104,40 @@ export class YouTubeService {
       };
   }
 
-    const result = await this.mediaDownloader.download({
-      videoIdOrUrl: input.videoIdOrUrl,
-      format: input.format,
-      maxSizeMb: input.maxSizeMb,
-    });
+    let usedScrapeCreatorsFallback = false;
+    let result;
+    try {
+      result = await this.mediaDownloader.download({
+        videoIdOrUrl: input.videoIdOrUrl,
+        format: input.format,
+        maxSizeMb: input.maxSizeMb,
+      });
+    } catch (primaryError) {
+      const canResolveXAudio = source.platform === "x"
+        && input.format === "best_audio"
+        && Boolean(this.scrapeCreatorsApiKey)
+        && isYtDlpDownloadFailure(primaryError);
+      if (!canResolveXAudio) throw primaryError;
+
+      try {
+        const resolved = await new ScrapeCreatorsClient(
+          this.scrapeCreatorsApiKey!,
+          this.scrapeCreatorsFetch,
+        ).resolveXMedia(source.canonicalUrl);
+        result = await this.mediaDownloader.download({
+          videoIdOrUrl: input.videoIdOrUrl,
+          format: input.format,
+          maxSizeMb: input.maxSizeMb,
+          resolvedMediaUrl: resolved.url,
+        });
+        usedScrapeCreatorsFallback = true;
+      } catch (fallbackError) {
+        throw new Error(
+          `X audio download failed through yt-dlp (${toMessage(primaryError)}). ` +
+          `ScrapeCreators media recovery also failed (${toMessage(fallbackError)}).`,
+        );
+      }
+    }
 
     return {
       asset: {
@@ -2091,7 +2159,11 @@ export class YouTubeService {
       downloadedBytes: result.downloadedBytes,
       durationMs: result.durationMs,
       cached: result.cached,
-      provenance: this.makeProvenance("yt_dlp", false, [`${source.platform} asset stored locally for Claude/Codex MCP use.`]),
+      provenance: this.makeProvenance(usedScrapeCreatorsFallback ? "scrapecreators" : "yt_dlp", false, [
+        usedScrapeCreatorsFallback
+          ? "X audio recovered from a ScrapeCreators-resolved public MP4 while preserving the original X source identity."
+          : `${source.platform} asset stored locally for Claude/Codex MCP use.`,
+      ]),
     };
 	  }
 
@@ -4350,6 +4422,23 @@ export class YouTubeService {
       keys: {
         youtubeApiConfigured: Boolean(process.env.YOUTUBE_API_KEY),
         geminiConfigured: Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY),
+        scrapeCreatorsConfigured: Boolean(this.scrapeCreatorsApiKey),
+      },
+      xDiscovery: {
+        scrapeCreators: {
+          configured: Boolean(this.scrapeCreatorsApiKey),
+          available: Boolean(this.scrapeCreatorsApiKey),
+          capability: "handle_profile_lookup",
+          generalKeywordSearch: false,
+          liveProbe: "not_run",
+          detail: "Dry-run reports configuration only; no ScrapeCreators API request was made.",
+        },
+        webFallback: {
+          selectedProvider: "duckduckgo_lite",
+          available: true,
+          capability: "keyword_and_creator_discovery",
+          detail: "Dry-run assumes the default DuckDuckGo-lite web fallback is available.",
+        },
       },
       ffmpeg: {
         available: true,
@@ -4602,6 +4691,10 @@ function toMessage(error: unknown): string {
       : String(error);
   // Redact secrets/cookie paths before any error text reaches user-facing output.
   return redactSecrets(raw);
+}
+
+function isYtDlpDownloadFailure(error: unknown): boolean {
+  return error instanceof Error && /^yt-dlp download failed for /i.test(error.message);
 }
 
 function topStrings(values: string[], limit: number): string[] {
