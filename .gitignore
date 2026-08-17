@@ -21,3 +21,9 @@ my-video/public/
 my-video/src/LinkedInComposition.tsx
 my-video/src/lib/pixel-theme.ts
 my-video/src/scenes/linkedin/
+marketing-round/
+
+# V2 X launch release package — tracked in git, video included.
+# Must stay below the *.mp4 rule so the negation wins.
+!releases/v2-x-launch/
+!releases/v2-x-launch/**
