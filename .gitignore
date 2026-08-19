@@ -27,3 +27,8 @@ marketing-round/
 # Must stay below the *.mp4 rule so the negation wins.
 !releases/v2-x-launch/
 !releases/v2-x-launch/**
+
+# Raw 640MB video masters — local reference only. Must stay below the
+# negation above; GitHub rejects files over 100MB.
+releases/v2-x-launch/video/VidLens-Short.mp4
+releases/v2-x-launch/video/VidLens-Shortv2.mp4

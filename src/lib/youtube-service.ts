@@ -163,7 +163,7 @@ import type {
 } from "./types.js";
 import { YouTubeApiClient } from "./youtube-api-client.js";
 import { YtDlpClient } from "./ytdlp-client.js";
-import { resolveVideoSource, type VideoSourceRef } from "./video-source.js";
+import { isConcreteVideoSource, resolveVideoSource, type VideoSourceRef } from "./video-source.js";
 
 interface YouTubeServiceConfig {
   apiKey?: string;
@@ -434,14 +434,54 @@ export class YouTubeService {
   }
 
   async readTranscript(input: ReadTranscriptInput, options: ServiceOptions = {}): Promise<ReadTranscriptOutput> {
-    const videoId = this.requireVideoId(input.videoIdOrUrl);
+    const rawSource = input.videoIdOrUrl?.trim();
+    if (!rawSource) {
+      throw this.invalidInput("videoIdOrUrl cannot be empty");
+    }
+    let videoId: string;
+    let resolved: { data: TranscriptRecord; provenance: Provenance };
+    try {
+      const source = resolveVideoSource(rawSource);
+      if (source.platform === "youtube") {
+        videoId = source.sourceId;
+        resolved = await this.resolveTranscript(videoId, input.language, options);
+      } else {
+        videoId = source.assetKey;
+        const stored = this.knowledgeBase.readStoredTranscript([
+          source.assetKey,
+          source.sourceId,
+          source.canonicalUrl,
+          rawSource,
+        ]);
+        if (!stored) {
+          throw this.invalidInput(
+            "No stored transcript was found for this source. Run transcribeVideoSource first, then readTranscript can reuse it without downloading again.",
+          );
+        }
+        resolved = {
+          data: stored,
+          provenance: this.makeProvenance("none", false, ["Transcript read from the local VidLens knowledge base."]),
+        };
+      }
+    } catch (error) {
+      if (error instanceof ToolExecutionError) throw error;
+      const stored = this.knowledgeBase.readStoredTranscript([rawSource]);
+      if (!stored) {
+        videoId = this.requireVideoId(rawSource);
+        resolved = await this.resolveTranscript(videoId, input.language, options);
+      } else {
+        videoId = stored.videoId;
+        resolved = {
+          data: stored,
+          provenance: this.makeProvenance("none", false, ["Transcript read from the local VidLens knowledge base."]),
+        };
+      }
+    }
     const requestedMode = input.mode ?? "key_moments";
     const includeTimestamps = input.includeTimestamps ?? true;
     const offset = Math.max(0, input.offset ?? 0);
     const limit = clamp(input.limit ?? 32000, 1000, 64000);
     const chunkWindowSec = clamp(input.chunkWindowSec ?? 120, 30, 900);
-
-    const resolved = await this.resolveTranscript(videoId, input.language, options);
 
     const transcript = resolved.data;
     const totalCharacters = transcript.transcriptText.length;
@@ -1628,7 +1668,7 @@ export class YouTubeService {
 
     try {
       const direct = resolveVideoSource(query);
-      if (requestedPlatforms.has(direct.platform)) {
+      if (requestedPlatforms.has(direct.platform) && isConcreteVideoSource(direct)) {
         return {
           query,
           results: [{
@@ -1737,7 +1777,7 @@ export class YouTubeService {
           for (const item of social.results) {
             try {
               const source = resolveVideoSource(item.url);
-              if (source.platform !== item.platform) continue;
+              if (source.platform !== item.platform || !isConcreteVideoSource(source)) continue;
               results.push({
                 platform: source.platform,
                 sourceId: source.sourceId,
@@ -1845,7 +1885,7 @@ export class YouTubeService {
         for (const item of webResults) {
           try {
             const source = resolveVideoSource(item.url);
-            if (source.platform !== platform) {
+            if (source.platform !== platform || !isConcreteVideoSource(source)) {
               continue;
             }
             results.push({

@@ -2,9 +2,9 @@
 
 VidLens exposes the same MCP server to Claude, Codex CLI, and Codex Desktop.
 
-## Development Profile
+## Development Checkout
 
-Use the `dev` profile from a checkout after running:
+To run the MCP server directly from a checkout:
 
 ```sh
 npm install
@@ -12,13 +12,15 @@ npm run build
 npm run setup -- --client codex
 ```
 
-The development profile runs `node ../../dist/cli.js serve` from this plugin directory, so it is only valid inside the repository.
+Then register the checkout with `npm run setup -- --client codex`; the setup helper writes the
+checkout-aware command into Codex configuration. The distributed plugin manifest intentionally
+contains only the portable release command accepted by Codex plugin validation.
 
 If you want the bare `vidlens-mcp` command from a checkout, run `npm install -g .` or `npm link` once. A plain `npm install` only installs dependencies.
 
-## Release Profile
+## Distributed Plugin
 
-The release profile runs:
+The plugin runs:
 
 ```sh
 npx -y vidlens-mcp serve
@@ -39,6 +41,17 @@ VidLens starts with a free core: public YouTube transcripts/search/metadata use 
 - `SCRAPECREATORS_API_KEY`: direct social trend search across TikTok, Instagram, Threads, Pinterest, Reddit, and supported ScrapeCreators endpoints.
 - `BRAVE_API_KEY` or `SERPAPI_KEY`: structured web discovery for finding social/generic video URLs by query.
 - Browser cookies: logged-in, gated, age-limited, or rate-limited social videos.
+
+For an individual social video, the distributed agent skill follows this order automatically:
+
+1. reuse anything already in the local VidLens library;
+2. try the exact public post URL through yt-dlp with no key;
+3. use Browser/Chrome control, when the host provides it, to find or verify the canonical post URL;
+4. retry with configured cookies or import a permitted local-file download;
+5. use configured APIs for scale and reliability.
+
+Browser assistance is a client-side workflow, not a hidden scraper inside the MCP server. Codex or
+Claude installations without browser control still retain direct-URL and local-file ingestion.
 
 Normal setup explains this capability ladder but does not ask for API keys, STT providers, web-search providers, or cookies. Keys are only stored when you pass them explicitly or run the advanced setup flow.
 

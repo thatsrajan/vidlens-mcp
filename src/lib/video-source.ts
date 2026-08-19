@@ -222,6 +222,33 @@ export function isVideoSourceLike(input: string): boolean {
   }
 }
 
+/** True when a social URL identifies a post/video, not a profile or explore page. */
+export function isConcreteVideoSource(source: VideoSourceRef): boolean {
+  if (source.platform === "youtube" || source.platform === "local_file" || source.platform === "generic_url") {
+    return true;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(source.canonicalUrl);
+  } catch {
+    return false;
+  }
+
+  const path = url.pathname.replace(/\/+$/, "");
+  switch (source.platform) {
+    case "x":
+      return /\/(?:status|statuses)\/\d+(?:\/video\/\d+)?$/i.test(path);
+    case "instagram":
+      return /\/(?:reel|reels|p|tv)\/[A-Za-z0-9_-]+$/i.test(path);
+    case "tiktok":
+      return /\/@[^/]+\/video\/\d+$/i.test(path)
+        || (/^(?:vm|vt)\.tiktok\.com$/i.test(url.hostname) && path.length > 1);
+    default:
+      return false;
+  }
+}
+
 function resolveLocalFile(raw: string, cwd: string): { path: string } | null {
   let candidate = raw;
   if (raw.startsWith("file://")) {

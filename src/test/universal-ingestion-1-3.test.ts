@@ -504,4 +504,17 @@ test("transcribeVideoSource dry-run persists a searchable non-YouTube transcript
   assert.ok(search.results.length > 0);
   assert.equal(search.results[0]?.sourcePlatform, "tiktok");
   assert.equal(search.results[0]?.timestampUrl.includes("youtu.be"), false);
+
+  const readByUrl = await service.readTranscript({
+    videoIdOrUrl: "https://www.tiktok.com/@vidlens/video/7350000000000000000",
+    mode: "full",
+  });
+  assert.equal(readByUrl.videoId, "tiktok_7350000000000000000");
+  assert.match(readByUrl.transcript.text ?? "", /titles/i);
+
+  const readByAssetKey = await service.readTranscript({
+    videoIdOrUrl: "tiktok_7350000000000000000",
+    mode: "summary",
+  });
+  assert.equal(readByAssetKey.videoId, "tiktok_7350000000000000000");
 });

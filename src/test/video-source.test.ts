@@ -4,7 +4,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { resolveVideoSource } from "../lib/video-source.js";
+import { isConcreteVideoSource, resolveVideoSource } from "../lib/video-source.js";
 
 test("resolveVideoSource keeps YouTube IDs backward compatible as asset keys", () => {
   const source = resolveVideoSource("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
@@ -48,6 +48,16 @@ test("resolveVideoSource routes look-alike hostnames to generic_url", () => {
 test("resolveVideoSource still matches real platform subdomains", () => {
   assert.equal(resolveVideoSource("https://m.youtube.com/watch?v=dQw4w9WgXcQ").platform, "youtube");
   assert.equal(resolveVideoSource("https://vm.tiktok.com/ZMabc123/").platform, "tiktok");
+});
+
+test("distinguishes concrete social videos from profiles and explore pages", () => {
+  assert.equal(isConcreteVideoSource(resolveVideoSource("https://x.com/openai/status/1234567890")), true);
+  assert.equal(isConcreteVideoSource(resolveVideoSource("https://x.com/openai")), false);
+  assert.equal(isConcreteVideoSource(resolveVideoSource("https://www.instagram.com/reel/C8AbCdEfGhi/")), true);
+  assert.equal(isConcreteVideoSource(resolveVideoSource("https://www.instagram.com/openai/")), false);
+  assert.equal(isConcreteVideoSource(resolveVideoSource("https://www.instagram.com/reels/")), false);
+  assert.equal(isConcreteVideoSource(resolveVideoSource("https://www.tiktok.com/@creator/video/7350000000000000000")), true);
+  assert.equal(isConcreteVideoSource(resolveVideoSource("https://www.tiktok.com/@creator")), false);
 });
 
 test("resolveVideoSource preserves query string for generic URLs", () => {

@@ -39,17 +39,31 @@ lost between sessions.
 ## Fallback tiers — what works without keys, what improves with them
 
 VidLens is designed to work with **zero API keys**:
-- **No keys:** metadata and transcripts come from InnerTube first, then yt-dlp. Downloads use
-  yt-dlp. This covers most YouTube read/import/download work.
+- **Local reuse:** call `recallWorkspace` first. Previously imported transcripts, media, and visual
+  indexes are free and work across clients.
+- **No keys:** YouTube uses InnerTube then yt-dlp. Exact public X, Instagram, TikTok, and generic
+  video URLs use yt-dlp plus locally available ffmpeg/STT. DuckDuckGo-lite provides best-effort
+  discovery and only concrete post/video URLs are accepted.
+- **Browser-assisted:** when the host exposes Browser or Chrome control, use it to resolve a
+  creator/topic to the canonical post URL and capture visible metadata in a public or user-signed-in
+  session. Pass that URL back to VidLens. If a permitted download can be saved locally, import the
+  file. Browser visibility does not guarantee automatic media download; Computer Use is a last
+  resort when structured browser control is unavailable.
+- **Cookies:** configured browser cookies improve yt-dlp access for gated or rate-limited posts.
 - **`YOUTUBE_API_KEY`:** higher-fidelity search, richer metadata, reliable comment fetching
   and pagination. Without it, comments fall back to scraping (may return fewer or none).
 - **`GEMINI_API_KEY`:** Gemini embeddings for transcript/visual semantic search and Gemini
   frame descriptions (needed for visual descriptions on non-macOS). Without it, transcript
   embeddings are local (LSA) and visual indexing relies on Apple Vision OCR.
 - **`OPENAI_API_KEY`:** OpenAI speech-to-text for sources without native captions.
+- **`SCRAPECREATORS_API_KEY`:** paid reliability/scale for social discovery. Prefer it when it is
+  configured, but do not make it a requirement for a user handling an individual video.
 
 Provenance in every tool result reports which tier answered, so degraded answers are visible,
 not silent.
+
+For social videos, state the route in the final answer: `local reuse`, `public yt-dlp`,
+`browser-assisted`, `local-file handoff`, or `API-enhanced`.
 
 ## Manual-tools rule
 
