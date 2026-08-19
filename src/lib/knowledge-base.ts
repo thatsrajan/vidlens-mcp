@@ -159,6 +159,7 @@ export class TranscriptKnowledgeBase {
 	        source_platform TEXT,
 	        source_id TEXT,
 	        canonical_url TEXT,
+	        transcript_json TEXT,
 	        transcript_characters INTEGER,
         transcript_segments INTEGER,
         imported_at TEXT NOT NULL,
@@ -206,6 +207,7 @@ export class TranscriptKnowledgeBase {
     this.addColumnIfMissing("collection_videos", "source_platform", "TEXT");
     this.addColumnIfMissing("collection_videos", "source_id", "TEXT");
     this.addColumnIfMissing("collection_videos", "canonical_url", "TEXT");
+    this.addColumnIfMissing("collection_videos", "transcript_json", "TEXT");
     this.db.exec(`
       UPDATE collection_videos
       SET source_platform = 'youtube'
@@ -306,6 +308,67 @@ export class TranscriptKnowledgeBase {
       .prepare("SELECT 1 FROM collection_videos WHERE collection_id = ? AND video_id = ?")
       .get(collectionId, videoId) as { 1: number } | undefined;
     return Boolean(row);
+  }
+
+  /** Read an imported transcript by asset key, platform source ID, or canonical URL. */
+  readStoredTranscript(identifiers: string[]): TranscriptRecord | null {
+    const candidates = Array.from(new Set(identifiers.map((value) => value.trim()).filter(Boolean)));
+    if (candidates.length === 0) return null;
+
+    const placeholders = candidates.map(() => "?").join(", ");
+    const activeCollectionId = this.getActiveCollectionId();
+    const rows = this.db.prepare(`
+      SELECT collection_id, video_id, transcript_language, transcript_source_type, transcript_json, imported_at
+      FROM collection_videos
+      WHERE video_id IN (${placeholders})
+         OR source_id IN (${placeholders})
+         OR canonical_url IN (${placeholders})
+      ORDER BY imported_at DESC
+    `).all(...candidates, ...candidates, ...candidates) as Array<{
+      collection_id: string;
+      video_id: string;
+      transcript_language: string | null;
+      transcript_source_type: TranscriptRecord["sourceType"] | null;
+      transcript_json: string | null;
+      imported_at: string;
+    }>;
+    const row = rows.find((candidate) => candidate.collection_id === activeCollectionId) ?? rows[0];
+    if (!row) return null;
+
+    if (row.transcript_json) {
+      try {
+        const parsed = JSON.parse(row.transcript_json) as TranscriptRecord;
+        if (parsed && typeof parsed.transcriptText === "string" && Array.isArray(parsed.segments)) {
+          return { ...parsed, videoId: row.video_id };
+        }
+      } catch {
+        // Legacy or damaged JSON falls back to the persisted chunks below.
+      }
+    }
+
+    const chunks = this.db.prepare(`
+      SELECT t_start_sec, t_end_sec, text
+      FROM transcript_chunks
+      WHERE collection_id = ? AND video_id = ?
+      ORDER BY ordinal ASC
+    `).all(row.collection_id, row.video_id) as Array<{
+      t_start_sec: number;
+      t_end_sec: number | null;
+      text: string;
+    }>;
+    if (chunks.length === 0) return null;
+
+    return {
+      videoId: row.video_id,
+      languageUsed: row.transcript_language ?? undefined,
+      sourceType: row.transcript_source_type ?? "unknown",
+      transcriptText: chunks.map((chunk) => chunk.text).join("\n"),
+      segments: chunks.map((chunk) => ({
+        tStartSec: Number(chunk.t_start_sec),
+        tEndSec: chunk.t_end_sec === null ? undefined : Number(chunk.t_end_sec),
+        text: chunk.text,
+      })),
+    };
   }
 
   deleteVideo(collectionId: string, videoId: string): void {
@@ -660,8 +723,8 @@ export class TranscriptKnowledgeBase {
 	    const insertVideo = this.db.prepare(`
 	      INSERT OR REPLACE INTO collection_videos (
 	        collection_id, video_id, title, channel_title, published_at, transcript_language, transcript_source_type, url,
-	        source_platform, source_id, canonical_url, transcript_characters, transcript_segments, imported_at
-	      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	        source_platform, source_id, canonical_url, transcript_json, transcript_characters, transcript_segments, imported_at
+	      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	    `);
     const insertChunk = this.db.prepare(`
       INSERT OR REPLACE INTO transcript_chunks (
@@ -696,6 +759,7 @@ export class TranscriptKnowledgeBase {
 	            item.video.sourcePlatform ?? "youtube",
 	            item.video.sourceId ?? item.video.videoId,
 	            item.video.canonicalUrl ?? item.video.url ?? buildVideoUrl(item.video.videoId),
+	            JSON.stringify(item.transcript),
 	            item.transcript.transcriptText.length,
 	            item.transcript.segments.length,
 	            now,

@@ -71,8 +71,17 @@ MCP launcher's env/config if needed, restart the MCP server/client, and verify c
 ## Fallback tiers — what works without keys, what improves with them
 
 VidLens is designed to work with **zero API keys**:
-- **No keys:** metadata and transcripts come from InnerTube first, then yt-dlp. Downloads use
-  yt-dlp. This covers most YouTube read/import/download work.
+- **Local reuse:** call `recallWorkspace` first. Previously imported transcripts, media, and visual
+  indexes are free and work across clients.
+- **No keys:** YouTube uses InnerTube then yt-dlp. Exact public X, Instagram, TikTok, and generic
+  video URLs use yt-dlp plus locally available ffmpeg/STT. DuckDuckGo-lite provides best-effort
+  discovery and only concrete post/video URLs are accepted.
+- **Browser-assisted:** when the host exposes Browser or Chrome control, use it to resolve a
+  creator/topic to the canonical post URL and capture visible metadata in a public or user-signed-in
+  session. Pass that URL back to VidLens. If a permitted download can be saved locally, import the
+  file. Browser visibility does not guarantee automatic media download; Computer Use is a last
+  resort when structured browser control is unavailable.
+- **Cookies:** configured browser cookies improve yt-dlp access for gated or rate-limited posts.
 - **`YOUTUBE_API_KEY`:** higher-fidelity search, richer metadata, reliable comment fetching and
   pagination. Without it, comments fall back to scraping (may return fewer or none).
 - **`GEMINI_API_KEY`:** Gemini embeddings for transcript/visual semantic search and Gemini frame
@@ -80,11 +89,15 @@ VidLens is designed to work with **zero API keys**:
   are local (LSA) and visual indexing relies on Apple Vision OCR.
 - **`OPENAI_API_KEY`:** OpenAI speech-to-text for sources without native captions.
 - **`SCRAPECREATORS_API_KEY`:** direct social discovery, including handle-based X profile
-  retrieval. Without it, use `searchVideoSources`/public-web discovery and transcribe the exact
-  discovered post URL.
+  retrieval and paid reliability/scale. Prefer it when configured. Without it, use
+  `searchVideoSources`/public-web discovery and transcribe the exact discovered post URL.
 
 Provenance in every tool result reports which tier answered, so degraded answers are visible,
 not silent.
+
+For social videos, state the route in the final answer: `local reuse`, `public yt-dlp`,
+`browser-assisted`, `local-file handoff`, or `API-enhanced`. Browser assistance is orchestrated by
+the host agent, not by the MCP server, and may not exist in every Claude/Codex client.
 
 ## Manual-tools rule
 

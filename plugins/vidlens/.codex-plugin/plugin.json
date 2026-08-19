@@ -1,6 +1,6 @@
 {
   "name": "vidlens",
-  "version": "1.4.0",
+  "version": "1.4.2",
   "description": "Video intelligence for Codex and MCP clients: search, import, download, index, and visually search YouTube, social video URLs, generic URLs, and local video files.",
   "author": {
     "name": "Rajan",

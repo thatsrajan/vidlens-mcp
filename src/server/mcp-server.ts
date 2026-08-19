@@ -104,7 +104,7 @@ export const tools: Tool[] = [
   },
   {
     name: "readTranscript",
-    description: "Read transcript in summary, key moments, chapters, or paginated full mode with long-video safeguards. [~1-3s]",
+    description: "Read a YouTube transcript or reuse an imported X, Instagram, TikTok, generic, or local-file transcript in summary, key moments, chapters, or paginated full mode. [~1-3s]",
     inputSchema: {
       type: "object",
       properties: {

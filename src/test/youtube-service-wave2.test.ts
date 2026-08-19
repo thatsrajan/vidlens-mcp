@@ -57,6 +57,24 @@ test("searchVideoSources returns results with unique assetKeys (WS4-6)", async (
   assert.equal(keys.length, new Set(keys).size, "result assetKeys should be deduped");
 });
 
+test("searchVideoSources does not treat a social profile as a video source", async () => {
+  const previousProvider = process.env.VIDLENS_WEB_SEARCH_PROVIDER;
+  process.env.VIDLENS_WEB_SEARCH_PROVIDER = "none";
+  try {
+    const svc = new YouTubeService({ dataDir: mkdtempSync(join(tmpdir(), "vidlens-profile-gate-")) });
+    const output = await svc.searchVideoSources({
+      query: "https://www.instagram.com/openai/",
+      platforms: ["instagram"],
+      includeLocalAssets: false,
+    });
+    assert.equal(output.results.length, 0);
+    assert.equal(output.searched.some((item) => item.detail === "Resolved direct URL or local file input."), false);
+  } finally {
+    if (previousProvider === undefined) delete process.env.VIDLENS_WEB_SEARCH_PROVIDER;
+    else process.env.VIDLENS_WEB_SEARCH_PROVIDER = previousProvider;
+  }
+});
+
 test("reindexAfterImport fires for stored-Gemini collections and surfaces key errors as warnings", async () => {
   const svc = new YouTubeService({ dryRun: true, dataDir }) as any;
   const missingKey = () => Promise.reject(new Error("Gemini embedding provider selected but GEMINI_API_KEY/GOOGLE_API_KEY is not set."));

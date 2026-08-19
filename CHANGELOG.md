@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-08-19
+
+This release makes individual social-video research practical without requiring a paid scraper API, while keeping the limits visible. It also refreshes the public documentation and Codex plugin for distribution.
+
+### Added
+- A check-first capability ladder for X, Instagram, TikTok, generic video URLs, and local files: reuse the local library first, try an exact public post URL with yt-dlp, use host-level browser assistance for canonical URLs or metadata, then fall back to cookies, local files, or optional APIs when needed.
+- Stored social transcripts can be found and reused by their original URL or VidLens asset key, avoiding repeat downloads and transcription.
+- Regression coverage for concrete social-post URL validation and stored transcript reuse.
+
+### Changed
+- Social-video guidance now distinguishes a visible browser page from an exportable media stream. Browser assistance can recover a canonical URL or useful metadata, but it is not presented as a guaranteed media-download path.
+- The Codex plugin uses one portable `npx -y vidlens-mcp serve` configuration, with the same workflow guidance shipped in both Codex and plugin skill layouts.
+- Rewrote the README for technical and nontechnical readers, with a clearer zero-key starting path, honest optional-API tradeoffs, and refreshed lens-v3 launch artwork.
+
+### Fixed
+- Reject profile, search, explore, and other non-post social URLs before ingestion instead of passing them into opaque downstream failures.
+- Persist imported transcript JSON in the media manifest so future sessions can read it directly from the local library.
+
 ## [1.4.1] - 2026-07-09
 
 Corruption-proofing release for the media store, driven by a real-world failure on an X video where the audio download overwrote the video asset. Hardened via adversarial cross-model review (5 additional findings fixed).

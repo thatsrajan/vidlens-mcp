@@ -1,120 +1,73 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/readme-banner.png?v=20260407" alt="VidLens — video as a queryable local asset for AI agents" width="800" />
+  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/brand/readme-banner.png" alt="VidLens — your AI can read the web, now it can also watch it" width="800" />
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/vidlens-mcp"><img src="https://img.shields.io/npm/v/vidlens-mcp?style=flat-square&color=red" alt="npm" /></a>
-  <a href="https://github.com/thatsrajan/vidlens-mcp/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License" /></a>
-  <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-compatible-green?style=flat-square" alt="MCP" /></a>
-  <img src="https://img.shields.io/badge/tools-47-orange?style=flat-square" alt="47 tools" />
-  <img src="https://img.shields.io/badge/zero--config-✓-brightgreen?style=flat-square" alt="Zero Config" />
+  <a href="https://www.npmjs.com/package/vidlens-mcp"><img src="https://img.shields.io/npm/v/vidlens-mcp?style=flat-square&color=1f6668" alt="npm version" /></a>
+  <a href="https://github.com/thatsrajan/vidlens-mcp/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT license" /></a>
+  <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-compatible-green?style=flat-square" alt="MCP compatible" /></a>
 </p>
 
 <p align="center">
-  <a href="https://youtu.be/0BqrMKWIXkg">
-    <img src="https://img.shields.io/badge/▶%20Watch%20the%2060s%20demo-FF0000?style=for-the-badge&logo=youtube&logoColor=white" alt="Watch the 60s demo" />
-  </a>
+  <strong>Your AI can read the web. Now it can also watch it.</strong>
 </p>
 
-<p align="center">
-  <em>Most tools can read what was said in a video. VidLens can see what was shown.</em>
-</p>
+VidLens is an [MCP](https://modelcontextprotocol.io/) server that gives your AI agent eyes on video — YouTube, X, TikTok, Instagram, other video pages, or a file on your disk. Paste a link and ask a question. VidLens reads the transcript, looks at the frames, and answers with timestamps you can check. Everything it ingests lands in a library on your own machine, so your agent never has to watch the same video twice.
 
----
-
-## 🔍 What is VidLens?
-
-**Stop watching 10 videos to answer one question.** VidLens searches YouTube, reads the transcripts, and synthesizes what creators actually said — across multiple videos, with timestamps, benchmark charts, and sources.
-
-VidLens is a [Model Context Protocol](https://modelcontextprotocol.io/) server that gives AI agents deep, reliable access to YouTube. Not just transcripts — full intelligence: search, analysis, visual search, and auto-generated comparison charts.
-
-It is also growing into a universal video asset layer: direct video URLs from X/Twitter, Instagram, TikTok, generic yt-dlp-supported pages, and local video files can be imported into the same local media store for frame extraction, Apple Vision OCR/similarity, and visual search. Claude Desktop, Claude Code, Codex CLI, and the Codex desktop plugin all use the same MCP server.
-
-**No API key required to start.** Every tool has a three-tier fallback chain (YouTube API → yt-dlp → page extraction) so nothing breaks when quota runs out or keys aren't configured.
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/gifs/demo-one-prompt-research.gif" alt="One prompt → full research pipeline with benchmark comparison" width="800" />
-</p>
-
-### Try it — paste any of these into Claude:
-
-> **"I'm thinking about buying the M5 Max MacBook Pro.**
-> **Search YouTube for top tech reviewers and tell me what they're saying. Is it worth the upgrade from M3/M4?"**
->
-> *VidLens finds 10+ reviews, reads the transcripts, extracts benchmark scores, and presents comparison charts — all from one prompt.*
-
-> **"I want to understand how AI agents work.**
-> **Search YouTube for the best videos for a beginner and summarize what I need to know."**
->
-> *Discovers videos across creators, ranks by learning value, and prepares transcripts for follow-up questions.*
-
-> **"Search YouTube for reviews comparing the iPhone 17 Pro vs Samsung S26 Ultra.**
-> **What do reviewers agree on? Where do they disagree?"**
->
-> *Searches, reads transcripts from multiple reviewers, and synthesizes consensus vs disagreements with sources.*
-
----
-
-## 🎯 Core Capabilities
-
-### 🔍 Explore — One Prompt, Full Pipeline
-Ask a question about YouTube and VidLens does the rest: searches, ranks by creator match and freshness, reads transcripts, extracts benchmark data, and presents comparison charts automatically. Works for product research, learning, competitive analysis — anything on YouTube.
-
-### 🔎 Semantic Search Across Playlists
-Import entire playlists or video sets, index every transcript with Gemini embeddings, and search across hundreds of hours of content by meaning — not just keywords.
-
-### 👁️ Visual Search — See What's In Videos
-Extract keyframes, describe them with Gemini Vision, run OCR on slides and whiteboards, and search by what you **see** — not just what's said.
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/gifs/demo-visual-search.gif" alt="Visual search — find benchmark charts inside videos by searching" width="800" />
-</p>
-
-### 📊 Intelligence Layer — Not Just Data
-Sentiment analysis, niche trend discovery, content gap detection, hook pattern analysis, upload timing recommendations. The LLM does the thinking — VidLens gives it the right data.
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/gifs/demo-video-intelligence.gif" alt="Video intelligence — stats, structure analysis, and comment sentiment" width="800" />
-</p>
-
-### ⚡ Zero Config, Always Works
-No API key needed to start. Three-tier fallback chain on every tool. Nothing breaks when quota runs out. Keys are optional power-ups.
-
-### 🎬 Full Media Pipeline
-Download videos/audio/thumbnails. Extract keyframes. Index comments for semantic search. Build a local knowledge base from any YouTube content.
-
----
-
-## ⚡ Why VidLens?
-
-<table>
-<tr><th></th><th>VidLens</th><th>Other YouTube MCP servers</th></tr>
-<tr><td>🔑 <strong>Setup</strong></td><td>✅ Works immediately - no keys needed</td><td>❌ Most require YouTube API key upfront</td></tr>
-<tr><td>🛡️ <strong>Reliability</strong></td><td>✅ Three-tier fallback on every tool</td><td>❌ Single point of failure - API down = broken</td></tr>
-<tr><td>🧠 <strong>Intelligence</strong></td><td>✅ Sentiment, trends, content gaps, hooks</td><td>❌ Raw data dumps - you do the analysis</td></tr>
-<tr><td>📦 <strong>Token efficiency</strong></td><td>✅ 75-87% smaller responses</td><td>❌ Verbose JSON with thumbnails, etags, junk</td></tr>
-<tr><td>🔬 <strong>Depth</strong></td><td>✅ 47 tools across 11 modules</td><td>⚠️ 1-5 tools, mostly transcripts only</td></tr>
-<tr><td>🖼️ <strong>Visual evidence</strong></td><td>✅ Returns actual frame paths + timestamps, not just text hits</td><td>⚠️ Usually transcript-only or raw frame dumps</td></tr>
-<tr><td>⚖️ <strong>Trademark</strong></td><td>✅ Compliant naming</td><td>⚠️ Most violate YouTube trademark</td></tr>
-</table>
-
----
-
-## 🚀 Quick Start
-
-### 1. Install
+No API keys to start. Works in Claude Desktop, Claude Code, and Codex.
 
 ```bash
 npx vidlens-mcp setup
 ```
 
-This auto-detects your MCP clients (Claude Desktop, Claude Code, Codex when present), downloads **yt-dlp** if needed, and walks you through optional API keys, speech-to-text, web search, and cookies. No manual config editing required. For Claude Code, setup registers VidLens in the user MCP registry and verifies the result with `claude mcp list`; when API keys or cookie settings are present, it writes the registry file directly so secrets are not passed through command arguments.
+---
 
-If you install globally with `npm install -g vidlens-mcp`, npm prints the next command to run. The install step itself does not collect secrets; `vidlens-mcp setup` is the interactive configuration wizard that writes the MCP env blocks for your clients.
+## Try it
 
-From a local checkout, `npm install` does not put this package's own binary on your shell `PATH`. Use `npm run setup` from the checkout, or run `npm install -g .` / `npm link` if you want the bare `vidlens-mcp` command while developing.
+Once VidLens is set up, paste any of these into your AI client:
 
-### 2. Or configure manually
+> "Search YouTube for M5 Max MacBook Pro reviews. What do reviewers agree on, and where do they disagree?"
+
+VidLens searches, reads the transcripts across reviewers, and synthesizes consensus and disagreement with sources and timestamps.
+
+> "Transcribe this video and summarize it: https://x.com/username/status/123..."
+
+A single public X, Instagram, or TikTok video URL usually needs no API key at all. VidLens fetches it, transcribes it, and keeps the transcript so you can ask follow-up questions later — in this session or any future one.
+
+> "Find the frame in this video where they show the benchmark chart."
+
+Visual search looks at what is on screen — slides, charts, whiteboards, product shots — and returns the actual frame image with its timestamp, not just a text guess.
+
+---
+
+## How it works
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/arch/arch-system-overview-v2.png" alt="Sources flow through ingestion into the VidLens MCP server, into a local library that your agents query" width="800" />
+</p>
+
+Video sources go in on the left. VidLens ingests them through whichever route works — the YouTube API when a key is configured, yt-dlp, or direct page extraction — and stores the results in a local library: transcripts, frames, and embeddings. Your agents query that library from any MCP client.
+
+Two honesty guarantees are built in:
+
+- **Fallbacks, not failures.** Every YouTube data tool tries multiple routes before giving up, so a missing key or an exhausted quota degrades gracefully instead of breaking.
+- **Provenance on responses.** Tool responses report which route served the data and whether anything was partial. No silent degradation.
+
+Everything lives in one directory on your disk. No external database, no Docker. Back it up by copying it; delete it to start fresh.
+
+---
+
+## Install
+
+### Setup wizard (recommended)
+
+```bash
+npx vidlens-mcp setup
+```
+
+The wizard detects supported MCP clients (Claude Desktop, Claude Code, and Codex), installs the free local dependencies it needs, and explains which optional upgrades apply to your use case. Normal setup does not ask for API keys, speech-to-text providers, web search, or cookies; use `--advanced` when you want those. For Claude Code, setup registers VidLens in the user MCP registry and checks the result with `claude mcp list` when possible.
+
+### Manual configuration
 
 **Claude Desktop** — add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
@@ -129,72 +82,110 @@ From a local checkout, `npm install` does not put this package's own binary on y
 }
 ```
 
-**Claude Code** — prefer the setup wizard. It registers VidLens in Claude Code's user MCP registry and checks that Claude Code can see it:
+**Claude Code** — prefer the wizard:
 
 ```bash
 npx vidlens-mcp setup --client claude_code
 claude mcp list
 ```
 
-If you must configure it manually, add the same `mcpServers.vidlens-mcp` entry to the Claude Code user registry file at `~/.claude.json`.
+If you configure it by hand instead, add the same `mcpServers.vidlens-mcp` entry to `~/.claude.json`.
 
-### 3. Restart your MCP client
+**Codex** — use the setup helper so the MCP server and bundled VidLens skills are registered together:
 
-Fully quit and reopen Claude Desktop (⌘Q). For Claude Code, start a new session or run `/mcp` again after setup.
+```bash
+npx vidlens-mcp setup --client codex
+```
 
-### 4. Try it
+### Restart your client
 
-Start with "Search YouTube" to activate VidLens:
+Fully quit and reopen Claude Desktop (⌘Q, not just close the window) — MCP servers load on startup. For Claude Code, start a new session or run `/mcp` after setup.
 
-> "Search YouTube for the top M5 Max MacBook Pro reviews and tell me if it's worth upgrading from M4."
->
-> "Search YouTube for the best videos about agentic AI for a beginner."
->
-> "Import this playlist and search across all videos for mentions of machine learning."
->
-> "Search this video's frames for the benchmark comparison chart."
->
-> "What's trending in the AI coding niche right now?"
+### From a local checkout
+
+`npm install` in a checkout does not put the binary on your `PATH`. Use `npm run setup` from the checkout, or `npm install -g .` / `npm link` if you want the bare `vidlens-mcp` command while developing.
 
 ---
 
-## 🧰 Tools - 47 across 11 modules
+## Your library
 
-### 🔍 Explore - YouTube Discovery & Research
-*The front door — one prompt, full pipeline*
+VidLens is durable memory for video work, not a per-session scratchpad. Everything you import persists on disk under `VIDLENS_DATA_DIR`: transcript collections, comment collections, downloaded media, and visual indexes. Even the active collection is remembered.
+
+**Recall it in one call.** At the start of a session, `recallWorkspace` returns a compact digest of everything already stored, so an agent knows what it has before searching or importing again. Tool descriptions carry the same reminder into every client, so agents check first instead of re-fetching.
+
+**Reuse by URL or asset key.** An imported social video's transcript can be pulled up again by its original URL or by its asset key — no re-download, no re-transcription.
+
+**One shared library across agents.** The default data directory is the same for every client, so Claude Desktop, Claude Code, and Codex all share one library — import a video in one, search it from another.
+
+> ⚠️ **Do not put `VIDLENS_DATA_DIR` inside Dropbox, iCloud, Google Drive, or any file-sync folder.** VidLens uses SQLite (with WAL), and live databases under a file syncer get corrupted or spawn conflict copies. Keep the data dir on a local disk — the default location already does.
+
+---
+
+## Beyond YouTube
+
+For X, Instagram, TikTok, and generic video pages, VidLens uses a capability ladder: it takes the cheapest route that works, and an API key is an uplift, not a prerequisite.
+
+| Route | Cost | Best for | What happens |
+|---|---|---|---|
+| Local reuse | Free | Anything imported before | `recallWorkspace` finds the stored transcript or media; nothing is re-fetched |
+| Public direct URL | Free | One X status, Instagram reel/post, or TikTok video | yt-dlp tries the canonical post URL anonymously; ffmpeg and local or configured STT handle media with no captions |
+| Browser-assisted | Free with a supported host | Finding or verifying a post, or using an existing signed-in session | Your client's browser control captures the canonical URL and visible metadata, then hands the URL back to VidLens |
+| Local-file handoff | Free | A video you are permitted to save | Import the saved file for transcription and visual indexing |
+| API-enhanced | Provider pricing | Bulk, unattended, or repeatable discovery | Configured ScrapeCreators, Brave, SerpAPI, YouTube, Gemini, or OpenAI capabilities are selected automatically |
+
+Three caveats, stated plainly:
+
+- **Browser assistance is host-level.** The MCP server does not control a browser itself; it relies on whatever browser tooling your client provides, which differs by host.
+- **Seeing a video is not the same as exporting it.** A post that plays in a browser does not guarantee automatic media export.
+- **Concrete URLs only.** VidLens imports specific post or video URLs, never profiles, explore pages, hashtags, or popularity pages.
+
+For social and local video work beyond plain download, install ffmpeg (`brew install ffmpeg` on macOS) — frame extraction, visual indexing, and STT audio chunking need it.
+
+---
+
+## The tools — 47 across 11 modules
+
+<details>
+<summary><strong>Explore — YouTube discovery and research (1)</strong></summary>
 
 | Tool | What it does |
 |---|---|
-| `exploreYouTube` | Intent-aware search with multi-query ranking, parallel enrichment, transcript summaries, structured benchmark data, and background indexing. One call replaces 5-8 individual tool calls. |
+| `exploreYouTube` | Intent-aware search with multi-query ranking, transcript summaries, structured benchmark data, and background indexing. One call replaces 5–8 individual tool calls. |
 
-### 📺 Core - Video & Channel Intelligence
-*Always available, no API key needed*
+</details>
+
+<details>
+<summary><strong>Core — video and channel intelligence (7)</strong></summary>
 
 | Tool | What it does |
 |---|---|
 | `findVideos` | Search YouTube by query with metadata |
-| `inspectVideo` | Deep metadata - tags, engagement, language, category |
+| `inspectVideo` | Deep metadata — tags, engagement, language, category |
 | `inspectChannel` | Channel stats, description, recent uploads |
 | `listChannelCatalog` | Browse a channel's full video library |
 | `readTranscript` | Full transcript with timestamps and chapters |
 | `readComments` | Top comments with likes and engagement |
 | `expandPlaylist` | List all videos in any playlist |
 
-### 🔎 Knowledge Base - Semantic Search
-*Index transcripts and search across them with natural language*
+</details>
+
+<details>
+<summary><strong>Knowledge base — semantic transcript search (7)</strong></summary>
 
 | Tool | What it does |
 |---|---|
 | `importPlaylist` | Index an entire playlist's transcripts |
-| `importVideos` | Index specific videos by URL/ID |
-| `searchTranscripts` | Natural language search across indexed content |
+| `importVideos` | Index specific videos by URL or ID |
+| `searchTranscripts` | Natural-language search across indexed content |
 | `listCollections` | Browse your indexed collections |
 | `setActiveCollection` | Scope searches to one collection |
 | `clearActiveCollection` | Search across all collections |
 | `removeCollection` | Delete a collection and its index |
 
-### 💬 Sentiment & Analysis
-*Understand what audiences think and feel*
+</details>
+
+<details>
+<summary><strong>Sentiment and analysis (4)</strong></summary>
 
 | Tool | What it does |
 |---|---|
@@ -203,8 +194,10 @@ Start with "Search YouTube" to activate VidLens:
 | `analyzePlaylist` | Playlist-level engagement analytics |
 | `buildVideoDossier` | Complete single-video deep analysis |
 
-### 🎯 Creator Intelligence
-*Insights for content strategy*
+</details>
+
+<details>
+<summary><strong>Creator intelligence (4)</strong></summary>
 
 | Tool | What it does |
 |---|---|
@@ -213,322 +206,198 @@ Start with "Search YouTube" to activate VidLens:
 | `compareShortsVsLong` | Short-form vs long-form performance |
 | `recommendUploadWindows` | Best times to publish for engagement |
 
-### 📈 Discovery & Trends
-*Find what's working in any niche*
+</details>
+
+<details>
+<summary><strong>Discovery and trends (2)</strong></summary>
 
 | Tool | What it does |
 |---|---|
-| `discoverNicheTrends` | Momentum, saturation, content gaps in any topic |
+| `discoverNicheTrends` | Momentum, saturation, and content gaps in any topic |
 | `exploreNicheCompetitors` | Channel landscape and top performers |
 
-### 🌐 Universal Video Sources
-*Resolve, search, and import video sources beyond YouTube*
+</details>
+
+<details>
+<summary><strong>Universal video sources (5)</strong></summary>
 
 | Tool | What it does |
 |---|---|
-| `inspectVideoSource` | Resolve YouTube, X/Twitter, Instagram, TikTok, generic URLs, and local files into source metadata and capability flags |
+| `inspectVideoSource` | Resolve YouTube, X, Instagram, TikTok, generic URLs, and local files into source metadata and capability flags |
 | `searchVideoSources` | Search native YouTube and local assets, with ScrapeCreators support for TikTok/Instagram plus configurable Brave/SerpAPI/DuckDuckGo fallback |
-| `searchSocialTrends` | Search social platforms through ScrapeCreators and return a playlist-like ranked list with engagement metrics and importable URLs where available |
+| `searchSocialTrends` | Search social platforms through ScrapeCreators; returns a ranked list with engagement metrics and importable URLs where available |
 | `importVideoSources` | Import URLs or local files into the local media store, optionally building a visual index or transcript |
-| `transcribeVideoSource` | Transcribe YouTube, social/generic URLs, and local files into the transcript knowledge base via native captions or configured STT |
+| `transcribeVideoSource` | Transcribe YouTube, social/generic URLs, and local files via native captions or configured STT |
 
-### 🎬 Media Assets
-*Download and manage video files locally*
+</details>
+
+<details>
+<summary><strong>Media assets (5)</strong></summary>
 
 | Tool | What it does |
 |---|---|
-| `downloadAsset` | Download or ingest video, audio, or thumbnails from YouTube/social URLs/generic URLs/local files |
+| `downloadAsset` | Download or ingest video, audio, or thumbnails from any supported source |
 | `listMediaAssets` | Browse stored media files |
 | `removeMediaAsset` | Clean up downloaded assets |
 | `extractKeyframes` | Extract key frames from videos |
 | `mediaStoreHealth` | Storage usage and diagnostics |
 
-### 🖼️ Visual Search
-*Three-layer visual intelligence. Not transcript reuse.*
+</details>
+
+<details>
+<summary><strong>Visual search (3)</strong></summary>
 
 | Tool | What it does |
 |---|---|
-| `indexVisualContent` | Extract frames, run Apple Vision OCR + feature prints, Gemini frame descriptions, and Gemini semantic embeddings |
-| `searchVisualContent` | Search visual frames using semantic embeddings + lexical matching. Returns actual image paths + timestamps as evidence |
+| `indexVisualContent` | Extract frames; run Apple Vision OCR and feature prints, Gemini frame descriptions, and Gemini semantic embeddings |
+| `searchVisualContent` | Search frames by meaning and text; returns actual image paths and timestamps as evidence |
 | `findSimilarFrames` | Image-to-image frame similarity using Apple Vision feature prints |
 
-**Three layers, all real:**
-1. **Apple Vision feature prints** — image-to-image similarity (find frames that look alike)
-2. **Gemini 2.5 Flash frame descriptions** — natural language scene understanding per frame
-3. **Gemini semantic embeddings** — 768-dim embedding retrieval over OCR + description text for true text→visual search
+Visual search is a dedicated index, separate from transcripts. Every match returns the frame path on disk, its timestamp, the source video, OCR text, and a visual description — evidence you can open and check.
 
-**What you always get back:** frame path on disk, timestamp, source video URL/title, match explanation, OCR text, visual description.
+</details>
 
-**What is NOT happening:** no transcript embeddings are reused for visual search. This is a separate visual index.
-
-### 💭 Comment Knowledge Base
-*Index and semantically search YouTube comments*
+<details>
+<summary><strong>Comment knowledge base (6)</strong></summary>
 
 | Tool | What it does |
 |---|---|
 | `importComments` | Index a video's comments for search |
-| `searchComments` | Natural language search over comment corpus |
+| `searchComments` | Natural-language search over the comment corpus |
 | `listCommentCollections` | Browse comment collections |
 | `setActiveCommentCollection` | Scope comment searches |
 | `clearActiveCommentCollection` | Search all comment collections |
 | `removeCommentCollection` | Delete a comment collection |
 
-### 🏥 Diagnostics
-*Health checks and pre-flight validation*
+</details>
+
+<details>
+<summary><strong>Diagnostics (3)</strong></summary>
 
 | Tool | What it does |
 |---|---|
-| `recallWorkspace` | Session-start recall of everything already imported (collections, media, visual indexes) — call first to avoid re-importing |
+| `recallWorkspace` | Session-start digest of everything already imported — call first to avoid re-importing |
 | `checkSystemHealth` | Full system diagnostic report |
 | `checkImportReadiness` | Validate before importing content |
 
+</details>
+
 ---
 
-## 🔑 API Keys (Optional)
+## Optional API keys
 
-VidLens works **without any API keys**. Add them to unlock more capabilities:
+VidLens works without any keys. Add them for scale and reliability:
 
-| Key | What it unlocks | Free? | How to get it |
+| Key | What it unlocks | Free? | Where |
 |---|---|---|---|
-| `YOUTUBE_API_KEY` | Better metadata, comment API, search via YouTube API | ✅ Free tier (10,000 units/day) | [Google Cloud Console](https://console.cloud.google.com/) → APIs → Enable YouTube Data API v3 → Credentials → Create API Key |
-| `GEMINI_API_KEY` | Higher-quality embeddings for semantic search (768d vs 384d) | ✅ Free tier | [Google AI Studio](https://aistudio.google.com/) → Get API Key |
-| `OPENAI_API_KEY` | Optional STT provider for `transcribeVideoSource` | Paid/free trial varies | [OpenAI Platform](https://platform.openai.com/) |
-| `SCRAPECREATORS_API_KEY` | Direct social search/trending for TikTok, Instagram, Threads, Pinterest, Reddit, and supported endpoints | 100 free credits, paid after | [ScrapeCreators](https://app.scrapecreators.com/) |
-| `BRAVE_API_KEY` / `SERPAPI_KEY` | Optional structured web search for social/generic URL discovery | Varies | Brave Search API or SerpAPI |
+| `YOUTUBE_API_KEY` | Better metadata, comment API, YouTube API search | Google quota applies | [Google Cloud Console](https://console.cloud.google.com/) → enable YouTube Data API v3 → create API key |
+| `GEMINI_API_KEY` | Higher-quality embeddings for semantic and visual search, frame descriptions | Provider pricing and limits apply | [Google AI Studio](https://aistudio.google.com/) |
+| `OPENAI_API_KEY` | Optional STT provider for transcription | Paid | [OpenAI Platform](https://platform.openai.com/) |
+| `SCRAPECREATORS_API_KEY` | Direct social search and trending for TikTok, Instagram, Threads, Pinterest, Reddit, and supported endpoints | Provider pricing applies | [ScrapeCreators](https://app.scrapecreators.com/) |
+| `BRAVE_API_KEY` / `SERPAPI_KEY` | Structured web search for social and generic URL discovery | Varies | Brave Search API or SerpAPI |
 
-> ⚠️ **These are separate keys from separate Google services.** A Gemini key will NOT work for YouTube API calls and vice versa. Create them independently.
+> ⚠️ **The YouTube and Gemini keys are separate keys from separate Google services.** A Gemini key will not work for YouTube API calls, and vice versa.
 
 ```bash
-# Configure via setup wizard. It prompts for YouTube, Gemini, OpenAI,
-# ScrapeCreators, Brave/SerpAPI, STT, browser cookies, and platform cookies.
+# Free-core setup asks for no keys.
 npx vidlens-mcp setup
 
-# Or provide everything non-interactively.
+# Advanced setup optionally prompts for keys, STT, web search, and cookies.
+npx vidlens-mcp setup --advanced
+
+# Or pass everything non-interactively.
 npx vidlens-mcp setup \
   --youtube-api-key YOUR_YOUTUBE_KEY \
   --gemini-api-key YOUR_GEMINI_KEY \
-  --openai-api-key YOUR_OPENAI_KEY \
-  --scrapecreators-api-key YOUR_SCRAPECREATORS_KEY \
-  --brave-api-key YOUR_BRAVE_KEY \
   --stt-provider auto \
   --cookies-from-browser chrome
-
-# Or via environment variables
-export YOUTUBE_API_KEY=your_youtube_key
-export GEMINI_API_KEY=your_gemini_key
-export OPENAI_API_KEY=your_openai_key
-export SCRAPECREATORS_API_KEY=your_scrapecreators_key
-export BRAVE_API_KEY=your_brave_key
 ```
 
-### Cookies, STT, and Codex
+### Cookies and speech-to-text
 
-For platforms that rate-limit anonymous access, the setup wizard can persist cookies by browser profile or file path into Claude/Codex config:
+For platforms that rate-limit anonymous access, the wizard can persist cookies by browser profile or file path:
 
 ```bash
 npx vidlens-mcp setup --cookies-from-browser chrome --cookies-profile Default
 npx vidlens-mcp setup --x-cookies-file /path/to/x-cookies.txt
 ```
 
-Recommended wizard answers for most users:
+Or via environment variables: `VIDLENS_COOKIES_FROM_BROWSER`, `VIDLENS_X_COOKIES_FILE`, `VIDLENS_INSTAGRAM_COOKIES_FILE`, `VIDLENS_TIKTOK_COOKIES_FILE`.
 
-| Prompt | Recommended answer | Why |
-|---|---|---|
-| STT provider | Press Enter for `auto` | Setup checks local whisper.cpp, then Gemini, then OpenAI after you answer |
-| Default STT language hint | `en` if most videos are English; otherwise press Enter | Helps STT quality without locking you in |
-| whisper.cpp model path | Press Enter unless you already have a local model file | Gemini/OpenAI fallback is simpler |
-| Web search provider | Press Enter for `auto` | Setup checks Brave/SerpAPI keys, then DuckDuckGo-lite |
-| Use browser cookies | Your logged-in browser, e.g. `chrome` | Lets yt-dlp read social-video cookies during import |
-| Browser profile name | Press Enter unless you use a named profile | Most users do not need this |
-| Platform-specific cookie files | `n` unless you exported Netscape cookie files | Browser cookies are easier |
-
-You can also configure them directly in your shell:
-
-```bash
-export VIDLENS_X_COOKIES_FILE=/path/to/x-cookies.txt
-export VIDLENS_INSTAGRAM_COOKIES_FILE=/path/to/instagram-cookies.txt
-export VIDLENS_TIKTOK_COOKIES_FILE=/path/to/tiktok-cookies.txt
-export VIDLENS_COOKIES_FROM_BROWSER=chrome
-```
-
-STT selection is automatic: local `whisper.cpp` first, then Gemini, then OpenAI. Override with `VIDLENS_STT_PROVIDER=whisper-cpp|gemini|openai|none|auto`.
-
-Codex setup:
-
-```bash
-vidlens-mcp setup --client codex --print-only
-vidlens-mcp doctor --no-live
-vidlens-mcp update-deps
-```
+STT selection is automatic: local whisper.cpp first, then Gemini, then OpenAI. Override with `VIDLENS_STT_PROVIDER=whisper-cpp|gemini|openai|none|auto`. When the wizard asks, pressing Enter for `auto` is the right answer for most people.
 
 ---
 
-## 💻 CLI
+## CLI
 
 ```bash
 npx vidlens-mcp               # Start MCP server (stdio)
 npx vidlens-mcp serve         # Start MCP server (explicit)
-npx vidlens-mcp setup         # Auto-configure Claude Desktop, Claude Code, Codex, keys, STT, and cookies
+npx vidlens-mcp setup         # Configure clients, keys, STT, cookies
 npx vidlens-mcp doctor        # Run diagnostics
+npx vidlens-mcp doctor --no-live   # Diagnostics without network checks
 npx vidlens-mcp update-deps   # Refresh managed yt-dlp and Deno helpers
 npx vidlens-mcp version       # Print version
-npx vidlens-mcp help          # Usage guide
 ```
 
-### Doctor - diagnose issues
+`doctor` checks Node.js version, yt-dlp freshness, STT and web-search providers, API key validity, data directory health, and MCP client registration for Claude Desktop, Claude Code, and Codex.
+
+---
+
+## Requirements
+
+| Requirement | Status | Notes |
+|---|---|---|
+| **Node.js ≥ 22** | Required | Uses `node:sqlite` — check with `node --version` |
+| **yt-dlp** | Auto-installed | Downloaded during `npx vidlens-mcp setup` |
+| **ffmpeg + ffprobe** | Recommended | Needed for media validation, frame extraction, visual indexing, and STT audio processing |
+| **YouTube API key** | Optional | Better metadata and comment access |
+| **Gemini API key** | Optional | Better embeddings and frame descriptions |
+| **macOS** | Optional | Apple Vision powers native OCR and image similarity; other platforms can use Gemini descriptions when configured |
+
+---
+
+## Security and privacy
+
+- Your library — transcripts, frames, embeddings, media — is stored locally and stays on your machine. Network calls go only to the sources you query and the APIs you configure.
+- Setup stores configured keys in your local MCP client configuration. Prefer the interactive advanced setup; keys supplied as CLI flags may remain in shell history. Error messages pass through a secret redactor so keys and cookie paths are not echoed in tool output.
+- Fetches of channel pages and generic URLs reject private, link-local, and loopback addresses (SSRF guard). Escape hatch for intentional local use: `VIDLENS_ALLOW_PRIVATE_URLS=1`.
+
+---
+
+## Troubleshooting
+
+**"Tool not found" in Claude Desktop.** Fully quit (⌘Q) and reopen. MCP servers load only on startup.
+
+**"YOUTUBE_API_KEY not configured" warning.** Informational, not an error. VidLens works without it.
+
+**"API_KEY_SERVICE_BLOCKED".** The key is not allowed to call the requested Google service. In Google Cloud Console, enable the YouTube Data API v3 and allow that API in the key's API restrictions. Keep appropriate application restrictions for where you run VidLens; do not make the key unrestricted unless you are only doing a short diagnostic and will restrict it again immediately.
+
+**Gemini key doesn't work for YouTube.** They are separate services with separate keys. See [Optional API keys](#optional-api-keys).
+
+**Social video downloads but visual analysis fails.** Install ffmpeg, then re-run setup:
+
+```bash
+brew install ffmpeg
+```
 
 ```bash
 npx vidlens-mcp doctor --no-live
 ```
 
-Checks: Node.js version, yt-dlp freshness, JS runtime, STT and web-search providers, platform readiness, API key validation, data directory health, MCP client registration (Claude Desktop, Claude Code, Codex), and whether `claude mcp list` can see the Claude Code registration.
+`downloadAsset` can often fetch a video without ffmpeg, but `indexVisualContent`, `extractKeyframes`, media validation, and STT audio processing need ffmpeg or ffprobe.
 
----
-
-## 📱 Works Everywhere — Desktop, Cowork, Phone
-
-VidLens works across the full Claude ecosystem. Set it up once, use it everywhere.
-
-### Claude Desktop — Chat
-The classic experience. Ask a question, get charts and analysis inline. Best for interactive research sessions.
-
-### Claude Desktop — Cowork Projects *(March 2026)*
-Create a persistent research project with VidLens connected. Claude remembers context across sessions — last week's competitive research informs this week's analysis. Set up scheduled tasks that run automatically:
-
-> *"Every Monday, search YouTube for new AI agent framework videos and compare to last week's findings."*
-
-### Claude Dispatch — From Your Phone *(March 2026)*
-Trigger any VidLens research from the Claude mobile app. Ask from your phone, Claude Desktop runs the tools locally, results come back to your pocket:
-
-> *"Run my competitive research project — what new M5 Max content dropped this weekend?"*
-
-### Claude Code — Remote Control
-Start a Claude Code session with `claude --remote-control`, then continue from any browser or your phone at `claude.ai/code`. Full tool access, full context.
-
-> **Note:** Your Mac must be awake with Claude Desktop open for Cowork, Dispatch, and scheduled tasks to execute.
-
----
-
-## 🏗️ Architecture
-
-### System Overview
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/arch-system-overview.png" alt="VidLens System Overview" width="800" />
-</p>
-
-### How the Fallback Chain Works
-
-Every tool that touches YouTube data uses the same resilience pattern:
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/arch-fallback-chain.png" alt="VidLens Fallback Chain" width="800" />
-</p>
-
-Every response includes a `provenance` field telling you exactly which tier served the data and whether anything was partial. No silent degradation — you always know what happened.
-
-### Visual Search Pipeline
-
-Visual search is not transcript reuse. It's a dedicated three-layer index:
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/arch-visual-pipeline.png" alt="VidLens Visual Search Pipeline" width="800" />
-</p>
-
-**Three layers, all real:**
-1. **Apple Vision feature prints** — image-to-image similarity (find frames that *look* alike)
-2. **Gemini Vision frame descriptions** — natural language scene understanding per frame
-3. **Gemini semantic embeddings** — 768-dim retrieval over OCR + description text
-
-### Data Storage
-
-Everything lives in a single directory. No external databases, no Docker, no infrastructure.
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/arch-data-storage.png" alt="VidLens Data Storage" width="600" />
-</p>
-
-One directory. Portable. Back it up by copying. Delete it to start fresh.
-
----
-
-## 🧠 Persistent memory across sessions
-
-VidLens is durable memory for video work, not a per-session scratchpad. Everything you import
-persists on disk under `VIDLENS_DATA_DIR` and is there next time — no re-downloading, no
-re-transcribing.
-
-**What persists:** transcript collections, comment collections, downloaded media assets
-(video/audio/thumbnails), and visual indexes (frames, OCR text, embeddings). Even the active
-collection is remembered.
-
-**Recall it in one call.** At the start of a session, call **`recallWorkspace`** — it returns a
-compact digest of every collection, media asset, and visual index already stored, so an agent
-knows what it has before searching or importing. Tool descriptions carry the same reminder into
-every client automatically, so agents check first instead of re-fetching.
-
-**One shared library across agents.** The default data dir is the same for every client, so
-Claude Desktop, Claude Code, and Codex all pointed at it share a single library — import a video
-in one and search it from another. Point them at the same `VIDLENS_DATA_DIR` explicitly if you
-customize the location.
-
-> ⚠️ **Do not put `VIDLENS_DATA_DIR` inside Dropbox, iCloud, Google Drive, or any file-sync
-> folder.** VidLens uses SQLite (with WAL), and live databases under a file syncer get corrupted
-> or spawn conflict copies. Keep the data dir on a local disk (the default already does this).
-
----
-
-## 📋 Requirements
-
-| Requirement | Status | Notes |
-|---|---|---|
-| **Node.js ≥ 22** | Required | Uses `node:sqlite` — `node --version` to check |
-| **yt-dlp** | Auto-installed | Downloaded automatically during `npx vidlens-mcp setup` |
-| **ffmpeg + ffprobe** | Recommended for universal video | Needed for Instagram/TikTok/X reels, local video files, STT audio chunking, frame extraction, and visual indexing. Setup/doctor detects it and suggests `brew install ffmpeg` on macOS |
-| **YouTube API key** | Optional | Unlocks comments, better metadata |
-| **Gemini API key** | Optional | Upgrades transcript embeddings and frame descriptions for visual search |
-| **macOS Apple Vision** | Automatic on macOS | Powers native OCR and image similarity for visual search |
-
----
-
-## 🔧 Troubleshooting
-
-### "Tool not found" in Claude Desktop
-Fully quit Claude Desktop (⌘Q, not just close window) and reopen. MCP servers only load on startup.
-
-### "YOUTUBE_API_KEY not configured" warning
-This is informational, not an error. VidLens works without it. Add a key only if you need comments/sentiment features.
-
-### "API_KEY_SERVICE_BLOCKED" error
-Your API key has restrictions. Create a new **unrestricted** key in Google Cloud Console, or remove the API restriction from the existing key.
-
-### Gemini key doesn't work for YouTube API
-These are **separate services**. You need a YouTube API key from Google Cloud Console AND a Gemini key from Google AI Studio. They are not interchangeable.
-
-### Build errors
-```bash
-npx vidlens-mcp doctor     # Run diagnostics
-npx vidlens-mcp doctor --no-live  # Skip network checks
-```
-
-### Instagram/TikTok/X reel downloads but visual analysis fails
-Install ffmpeg/ffprobe, then rerun setup or doctor:
+**Anything else:**
 
 ```bash
-brew install ffmpeg
-vidlens-mcp setup
-vidlens-mcp doctor --no-live
+npx vidlens-mcp doctor
 ```
-
-`downloadAsset` can often fetch the video without ffmpeg, but `indexVisualContent`, `extractKeyframes`, local-file ingestion, and STT chunking need ffmpeg/ffprobe.
 
 ---
 
-## 📄 License
+## License
 
 MIT
-
----
 
 <p align="center">
   <a href="https://github.com/thatsrajan/vidlens-mcp">GitHub</a> ·
