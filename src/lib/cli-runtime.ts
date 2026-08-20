@@ -139,7 +139,7 @@ export async function runCli(args: string[], deps: Partial<CliDeps> = {}): Promi
             `Supported clients: ${SUPPORTED_SETUP_CLIENTS.join(", ")}.`,
         );
       }
-      resolvedDeps.writeStderr(renderBanner({ version: resolvedDeps.packageMeta.version }));
+      resolvedDeps.writeStderr(renderBanner({ version: resolvedDeps.packageMeta.version, env: resolvedDeps.env }));
       const detectedClients = resolvedDeps.detectClients();
       const desktopDetected = detectedClients.some(c => c.clientId === "claude_desktop" && c.detected);
       const codeDetected = detectedClients.some(c => c.clientId === "claude_code" && c.detected);
