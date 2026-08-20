@@ -9,13 +9,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ## [1.5.0] - 2026-08-20
 
 ### Added
-- `renderVideoEvidence`, a read-only visual-search tool that returns portable structured evidence and attaches a sandboxed MCP App resource for compatible iframe hosts.
-- A responsive Video Evidence Viewer with frame-resource loading, OCR and match filters, source/timestamp actions, host theme and safe-area support, fullscreen, and follow-up prompts.
-- Protocol tests for tool metadata, resource discovery, app loading, structured fallback output, opaque frame resources, and local-path redaction.
+- A lens-v3 brand system with a new aperture mark, washi-paper visual language, production banners, social artwork, video endcards, and a documented asset guide.
+- A compact branded setup banner with truecolor and 256-color terminal support, plus regression coverage for layout, color fallback, and the displayed tool count.
+- Lightweight web-ready README and architecture artwork so npm and GitHub render the refreshed documentation without shipping oversized production masters.
 
 ### Changed
-- VidLens now exposes 48 tools. Codex CLI and Claude Code receive the same evidence as text/JSON when they cannot render an inline MCP App; the existing browser-gallery workflow remains available.
-- The MCP server advertises resources and packages the self-contained app HTML without external scripts, styles, or network domains.
+- Reworked the README around the zero-key starting path, persistent local video library, cross-client workflows, and the existing external visual-evidence gallery.
+- Clarified that Codex, Claude, and other capable clients can compose VidLens's structured results into their own native charts, cards, tables, and visual reports.
+- `searchVisualContent` is now an explicitly read-only query over an existing visual index. It never downloads or indexes media from the MCP surface; call `indexVisualContent` first when needed.
+- VidLens exposes 47 tools across 11 modules.
+
+### Fixed
+- Visual-search responses recursively remove local `framePath` fields and `file:` URLs before returning data to an MCP client.
 
 ## [1.4.2] - 2026-08-19
 

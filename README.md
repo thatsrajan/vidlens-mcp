@@ -11,11 +11,11 @@ npx vidlens-mcp setup
 
 - **Research video:** search, transcribe, compare, and cite YouTube and public social video.
 - **Build a local library:** import once, then search transcripts, comments, frames, and OCR without fetching the same video again.
-- **Inspect visual evidence:** find the exact frame, timestamp, match reason, and source in compatible graphical hosts or structured terminal output.
+- **Inspect visual evidence:** find the exact frame, timestamp, match reason, and source in a visual gallery plus structured client output.
 
 VidLens is an [MCP](https://modelcontextprotocol.io/) server that gives your AI agent eyes on video — YouTube, X, TikTok, Instagram, other video pages, or a file on your disk. Paste a link and ask a question. VidLens reads the transcript, looks at the frames, and answers with timestamps you can check. Everything it ingests lands in a library on your own machine, so your agent never has to watch the same video twice.
 
-No API keys to start. Works in Claude Desktop, Claude Code, and Codex. Compatible graphical MCP hosts can also render the VidLens Evidence Atlas inline.
+No API keys to start. Works in Claude Desktop, Claude Code, and Codex. Capable clients can turn VidLens's structured results into native charts, cards, tables, and visual reports in their own response surfaces.
 
 ---
 
@@ -33,22 +33,11 @@ A single public X, Instagram, or TikTok video URL usually needs no API key at al
 
 > "Find the frame in this video where they show the benchmark chart."
 
-Visual search looks at what is on screen — slides, charts, whiteboards, product shots — and returns the actual frame image with its timestamp, not just a text guess.
+Visual search looks at what is on screen — slides, charts, whiteboards, product shots — and shows the actual frame image with its timestamp in the local browser gallery, not just a text guess.
 
-### One tool, two presentation modes
+### Native client presentation
 
-`renderVideoEvidence` keeps the research result portable instead of making the UI a requirement.
-
-| Host | What you get |
-|---|---|
-| MCP Apps-capable graphical host | The inline, sandboxed VidLens Evidence Atlas with ranked evidence plates, OCR/match filters, source links, fullscreen, and follow-up prompts |
-| Codex CLI or Claude Code terminal | The same evidence as structured text/JSON, including timestamps, scores, OCR, descriptions, provenance, and limitations |
-
-Terminal clients do not need to render HTML for the tool to work. If a host does not support inline MCP Apps, VidLens simply uses the structured fallback; `searchVisualContent` can still open its existing external browser gallery when requested.
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/brand/video-evidence-atlas-web.png?v=20260820" alt="VidLens Evidence Atlas showing ranked visual evidence, retrieval provenance, timestamps, confidence scores, OCR, and match explanations" width="800" />
-</p>
+VidLens returns portable structured evidence: sources, timestamps, scores, OCR, descriptions, provenance, and limitations. Codex, Claude, and other capable clients can compose that evidence into their own native charts, comparison cards, tables, and visual reports. This presentation belongs to the client rather than an embedded VidLens UI. For extracted frame inspection, `searchVisualContent` can also open the existing external browser gallery.
 
 ---
 
@@ -155,7 +144,7 @@ For social and local video work beyond plain download, install ffmpeg (`brew ins
 
 ---
 
-## The tools — 48 across 11 modules
+## The tools — 47 across 11 modules
 
 ### Explore — YouTube discovery and research (1)
 
@@ -232,16 +221,15 @@ For social and local video work beyond plain download, install ffmpeg (`brew ins
 | `extractKeyframes` | Extract key frames from videos |
 | `mediaStoreHealth` | Storage usage and diagnostics |
 
-### Visual search and evidence (4)
+### Visual search and evidence (3)
 
 | Tool | What it does |
 |---|---|
 | `indexVisualContent` | Extract frames; run Apple Vision OCR and feature prints, Gemini frame descriptions, and Gemini semantic embeddings |
 | `searchVisualContent` | Search frames by meaning and text; returns timestamped evidence and can open the external browser gallery |
 | `findSimilarFrames` | Image-to-image frame similarity using Apple Vision feature prints |
-| `renderVideoEvidence` | Return structured frame evidence everywhere and attach the inline VidLens Evidence Atlas for MCP Apps-capable hosts |
 
-Visual search is a dedicated index, separate from transcripts. Every match includes its timestamp, source video, OCR text, and visual description. The Evidence Atlas reads images through opaque MCP resources, so tool results never expose local frame paths.
+Visual search is a dedicated index, separate from transcripts. Every match includes its timestamp, source video, OCR text, and visual description. Local frame paths and `file:` URLs are removed from MCP results; the browser gallery reads the images locally without exposing those paths to the client.
 
 ### Comment knowledge base (6)
 

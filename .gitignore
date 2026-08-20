@@ -13,6 +13,7 @@ docs/
 .claude/
 .codex/
 assets/v2/
+assets/arch/v2/
 *.mp4
 mcp-publisher
 

@@ -3,7 +3,10 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
+  createYouTubeMcpServer,
   tools,
   validateArgsAgainstSchema,
   normalizeError,
@@ -11,6 +14,7 @@ import {
   SERVER_VERSION,
 } from "../server/mcp-server.js";
 import { TOOL_COUNT } from "../lib/banner.js";
+import type { YouTubeService } from "../lib/youtube-service.js";
 
 /** Run dispatch-boundary validation and return the normalized error payload (as the server would emit it). */
 function normalizedValidationError(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
@@ -68,7 +72,6 @@ test("public MCP surface uses intent-based tool names", () => {
     // Visual Search
     "indexVisualContent",
     "searchVisualContent",
-    "renderVideoEvidence",
     "findSimilarFrames",
     // Comment Knowledge Base
     "importComments",
@@ -173,6 +176,11 @@ test("media and visual tools have correct required fields", () => {
   const searchTool = tools.find((t) => t.name === "searchVisualContent");
   assert.ok(searchTool, "searchVisualContent tool should exist");
   assert.deepEqual((searchTool.inputSchema as any).required, ["query"]);
+  assert.equal((searchTool.inputSchema as any).properties.autoIndexIfNeeded, undefined);
+  assert.equal(searchTool.annotations?.readOnlyHint, true);
+  assert.equal(searchTool.annotations?.destructiveHint, false);
+  assert.equal(searchTool.annotations?.idempotentHint, true);
+  assert.equal(searchTool.annotations?.openWorldHint, false);
 
   const similarTool = tools.find((t) => t.name === "findSimilarFrames");
   assert.ok(similarTool, "findSimilarFrames tool should exist");
@@ -228,16 +236,69 @@ test("deepStripFramePath removes framePath everywhere, including nested referenc
     reference: { framePath: "/tmp/ref.jpg", assetId: "ref-1" },
     results: [
       { framePath: "/tmp/a.jpg", score: 0.9 },
-      { framePath: "/tmp/b.jpg", score: 0.8, nested: { framePath: "/tmp/deep.jpg" } },
+      {
+        framePath: "/tmp/b.jpg",
+        score: 0.8,
+        sourceVideoUrl: "file:///Users/example/private.mp4",
+        nested: { framePath: "/tmp/deep.jpg", safeUrl: "https://example.com/video" },
+      },
     ],
-    matches: [{ framePath: "/tmp/c.jpg" }],
+    matches: [
+      { framePath: "/tmp/c.jpg" },
+      { source: "Open file:///Users/example/private.jpg" },
+      { source: "https://example.com/public.jpg" },
+      { source: "[FILE:///Users/example/also-private.jpg]" },
+    ],
+    "file:///Users/example/private-key.jpg": "private",
+    profile: "profile: creator",
   };
   const cleaned = deepStripFramePath(result);
   const scan = JSON.stringify(cleaned);
   assert.ok(!scan.includes("framePath"), `no framePath key should survive: ${scan}`);
+  assert.doesNotMatch(scan, /(?:^|[^a-z0-9+.-])file:/i, `no file: URI should survive: ${scan}`);
   // Non-framePath data is preserved.
   assert.equal((cleaned as any).reference.assetId, "ref-1");
   assert.equal((cleaned as any).results[0].score, 0.9);
+  assert.equal((cleaned as any).results[1].nested.safeUrl, "https://example.com/video");
+  assert.equal((cleaned as any).matches[2].source, "https://example.com/public.jpg");
+  assert.equal((cleaned as any).profile, "profile: creator");
+});
+
+test("searchVisualContent is pinned read-only at the MCP dispatch boundary and strips local URLs", async () => {
+  let receivedInput: Record<string, unknown> | undefined;
+  const service = {
+    searchVisualContent: async (input: Record<string, unknown>) => {
+      receivedInput = input;
+      return {
+        query: input.query,
+        results: [],
+        localSource: "file:///Users/example/private.mp4",
+        limitations: [],
+        provenance: { sourceTier: "none", degraded: false },
+      };
+    },
+  } as unknown as YouTubeService;
+
+  const server = createYouTubeMcpServer(service);
+  const client = new Client({ name: "vidlens-test-client", version: "1.0.0" }, { capabilities: {} });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    assert.equal(client.getServerCapabilities()?.resources, undefined);
+    const result = await client.callTool({
+      name: "searchVisualContent",
+      arguments: { query: "benchmark", autoIndexIfNeeded: true },
+    });
+
+    assert.equal(receivedInput?.autoIndexIfNeeded, false);
+    assert.ok(!JSON.stringify(result).includes("file:"));
+  } finally {
+    await client.close().catch(() => undefined);
+    await server.close().catch(() => undefined);
+  }
 });
 
 test("server version is read from package.json at runtime", () => {

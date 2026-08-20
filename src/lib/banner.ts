@@ -21,7 +21,7 @@ export interface BannerOptions {
  * Number of MCP tools exposed by the server. Single source of truth for every
  * banner surface (server startup, `setup` wizard, plain-text help).
  */
-export const TOOL_COUNT = 48;
+export const TOOL_COUNT = 47;
 
 /**
  * Render the lens-v3 install banner. Pass `version` to append it after the

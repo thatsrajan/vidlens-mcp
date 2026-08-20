@@ -1,7 +1,7 @@
 {
   "name": "vidlens",
   "version": "1.5.0",
-  "description": "Video intelligence for Codex and MCP clients: search, import, index, and inspect video evidence with portable structured results and an optional MCP App viewer.",
+  "description": "Video intelligence for Codex and MCP clients: search, import, index, and inspect video evidence with portable structured results.",
   "author": {
     "name": "Rajan",
     "url": "https://github.com/thatsrajan"
@@ -24,7 +24,7 @@
   "interface": {
     "displayName": "VidLens",
     "shortDescription": "Search and index video as local assets",
-    "longDescription": "VidLens turns online and local videos into searchable local assets for AI agents. It supports YouTube plus universal video source ingestion through the same MCP server used by Claude and Codex, with yt-dlp downloads, ffmpeg frame extraction, Apple Vision OCR/similarity, optional Gemini descriptions and embeddings, structured terminal evidence, and an inline MCP App viewer in compatible hosts.",
+    "longDescription": "VidLens turns online and local videos into searchable local assets for AI agents. It supports YouTube plus universal video source ingestion through the same MCP server used by Claude and Codex, with yt-dlp downloads, ffmpeg frame extraction, Apple Vision OCR/similarity, optional Gemini descriptions and embeddings, and structured evidence that capable clients can present through their own native response surfaces.",
     "developerName": "Rajan",
     "category": "Research",
     "capabilities": [
@@ -40,7 +40,7 @@
       "Search my local video assets",
       "Show video evidence for the benchmark chart"
     ],
-    "brandColor": "#EF4444",
+    "brandColor": "#1F6668",
     "composerIcon": "./assets/logo.png",
     "logo": "./assets/logo.png",
     "screenshots": []
