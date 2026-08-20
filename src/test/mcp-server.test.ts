@@ -86,7 +86,7 @@ test("TOOL_COUNT matches the actual registered tool count (no drift)", () => {
   assert.equal(
     TOOL_COUNT,
     tools.length,
-    `TOOL_COUNT (${TOOL_COUNT}) must equal the number of registered tools (${tools.length}). Update banner.ts when adding/removing a tool.`,
+    `TOOL_COUNT (${TOOL_COUNT}) must equal the number of registered tools (${tools.length}). Update src/lib/banner.ts when adding/removing a tool.`,
   );
 });
 

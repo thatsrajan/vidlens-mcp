@@ -119,9 +119,11 @@ test("MCP client can list and read the app, call the renderer, and fetch an opaq
     const appContents = await client.readResource({ uri: VIDEO_EVIDENCE_APP_URI });
     const html = appContents.contents[0];
     assert.ok(html && "text" in html);
-    assert.match(html.text, /VidLens Video Evidence/);
+    assert.match(html.text, /VidLens Evidence Atlas/);
     assert.match(html.text, /ui\/initialize/);
     assert.ok(!html.text.includes("/*__VIDLENS_APP_BUNDLE__*/"));
+    assert.ok(!html.text.includes("__VIDLENS_BRAND_MARK__"));
+    assert.match(html.text, /data:image\/png;base64,/);
 
     const call = await client.callTool({
       name: "renderVideoEvidence",
