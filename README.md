@@ -1,24 +1,21 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/brand/readme-banner.png" alt="VidLens — your AI can read the web, now it can also watch it" width="800" />
+  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/brand/readme-banner-web.png?v=20260820" alt="VidLens — your AI can read the web, now it can also watch it" width="800" />
 </p>
 
-<p align="center">
-  <a href="https://www.npmjs.com/package/vidlens-mcp"><img src="https://img.shields.io/npm/v/vidlens-mcp?style=flat-square&color=1f6668" alt="npm version" /></a>
-  <a href="https://github.com/thatsrajan/vidlens-mcp/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT license" /></a>
-  <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-compatible-green?style=flat-square" alt="MCP compatible" /></a>
-</p>
-
-<p align="center">
-  <strong>Your AI can read the web. Now it can also watch it.</strong>
-</p>
-
-VidLens is an [MCP](https://modelcontextprotocol.io/) server that gives your AI agent eyes on video — YouTube, X, TikTok, Instagram, other video pages, or a file on your disk. Paste a link and ask a question. VidLens reads the transcript, looks at the frames, and answers with timestamps you can check. Everything it ingests lands in a library on your own machine, so your agent never has to watch the same video twice.
-
-No API keys to start. Works in Claude Desktop, Claude Code, and Codex. Compatible graphical MCP hosts can also render VidLens's evidence viewer inline.
+**Your AI can read the web.**\
+**Now it can also watch it.**
 
 ```bash
 npx vidlens-mcp setup
 ```
+
+- **Research video:** search, transcribe, compare, and cite YouTube and public social video.
+- **Build a local library:** import once, then search transcripts, comments, frames, and OCR without fetching the same video again.
+- **Inspect visual evidence:** find the exact frame, timestamp, match reason, and source in compatible graphical hosts or structured terminal output.
+
+VidLens is an [MCP](https://modelcontextprotocol.io/) server that gives your AI agent eyes on video — YouTube, X, TikTok, Instagram, other video pages, or a file on your disk. Paste a link and ask a question. VidLens reads the transcript, looks at the frames, and answers with timestamps you can check. Everything it ingests lands in a library on your own machine, so your agent never has to watch the same video twice.
+
+No API keys to start. Works in Claude Desktop, Claude Code, and Codex. Compatible graphical MCP hosts can also render the VidLens Evidence Atlas inline.
 
 ---
 
@@ -44,17 +41,21 @@ Visual search looks at what is on screen — slides, charts, whiteboards, produc
 
 | Host | What you get |
 |---|---|
-| MCP Apps-capable graphical host | An inline, sandboxed evidence viewer with frame cards, OCR/match filters, source links, fullscreen, and follow-up prompts |
+| MCP Apps-capable graphical host | The inline, sandboxed VidLens Evidence Atlas with ranked evidence plates, OCR/match filters, source links, fullscreen, and follow-up prompts |
 | Codex CLI or Claude Code terminal | The same evidence as structured text/JSON, including timestamps, scores, OCR, descriptions, provenance, and limitations |
 
 Terminal clients do not need to render HTML for the tool to work. If a host does not support inline MCP Apps, VidLens simply uses the structured fallback; `searchVisualContent` can still open its existing external browser gallery when requested.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/brand/video-evidence-atlas-web.png?v=20260820" alt="VidLens Evidence Atlas showing ranked visual evidence, retrieval provenance, timestamps, confidence scores, OCR, and match explanations" width="800" />
+</p>
 
 ---
 
 ## How it works
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/arch/arch-system-overview-v2.png" alt="Sources flow through ingestion into the VidLens MCP server, into a local library that your agents query" width="800" />
+  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/arch/arch-system-overview-v2-web.png?v=20260820" alt="Sources flow through ingestion into the VidLens MCP server, into a local library that your agents query" width="800" />
 </p>
 
 Video sources go in on the left. VidLens ingests them through whichever route works — the YouTube API when a key is configured, yt-dlp, or direct page extraction — and stores the results in a local library: transcripts, frames, and embeddings. Your agents query that library from any MCP client.
@@ -156,17 +157,13 @@ For social and local video work beyond plain download, install ffmpeg (`brew ins
 
 ## The tools — 48 across 11 modules
 
-<details>
-<summary><strong>Explore — YouTube discovery and research (1)</strong></summary>
+### Explore — YouTube discovery and research (1)
 
 | Tool | What it does |
 |---|---|
 | `exploreYouTube` | Intent-aware search with multi-query ranking, transcript summaries, structured benchmark data, and background indexing. One call replaces 5–8 individual tool calls. |
 
-</details>
-
-<details>
-<summary><strong>Core — video and channel intelligence (7)</strong></summary>
+### Core — video and channel intelligence (7)
 
 | Tool | What it does |
 |---|---|
@@ -178,10 +175,7 @@ For social and local video work beyond plain download, install ffmpeg (`brew ins
 | `readComments` | Top comments with likes and engagement |
 | `expandPlaylist` | List all videos in any playlist |
 
-</details>
-
-<details>
-<summary><strong>Knowledge base — semantic transcript search (7)</strong></summary>
+### Knowledge base — semantic transcript search (7)
 
 | Tool | What it does |
 |---|---|
@@ -193,10 +187,7 @@ For social and local video work beyond plain download, install ffmpeg (`brew ins
 | `clearActiveCollection` | Search across all collections |
 | `removeCollection` | Delete a collection and its index |
 
-</details>
-
-<details>
-<summary><strong>Sentiment and analysis (4)</strong></summary>
+### Sentiment and analysis (4)
 
 | Tool | What it does |
 |---|---|
@@ -205,10 +196,7 @@ For social and local video work beyond plain download, install ffmpeg (`brew ins
 | `analyzePlaylist` | Playlist-level engagement analytics |
 | `buildVideoDossier` | Complete single-video deep analysis |
 
-</details>
-
-<details>
-<summary><strong>Creator intelligence (4)</strong></summary>
+### Creator intelligence (4)
 
 | Tool | What it does |
 |---|---|
@@ -217,20 +205,14 @@ For social and local video work beyond plain download, install ffmpeg (`brew ins
 | `compareShortsVsLong` | Short-form vs long-form performance |
 | `recommendUploadWindows` | Best times to publish for engagement |
 
-</details>
-
-<details>
-<summary><strong>Discovery and trends (2)</strong></summary>
+### Discovery and trends (2)
 
 | Tool | What it does |
 |---|---|
 | `discoverNicheTrends` | Momentum, saturation, and content gaps in any topic |
 | `exploreNicheCompetitors` | Channel landscape and top performers |
 
-</details>
-
-<details>
-<summary><strong>Universal video sources (5)</strong></summary>
+### Universal video sources (5)
 
 | Tool | What it does |
 |---|---|
@@ -240,10 +222,7 @@ For social and local video work beyond plain download, install ffmpeg (`brew ins
 | `importVideoSources` | Import URLs or local files into the local media store, optionally building a visual index or transcript |
 | `transcribeVideoSource` | Transcribe YouTube, social/generic URLs, and local files via native captions or configured STT |
 
-</details>
-
-<details>
-<summary><strong>Media assets (5)</strong></summary>
+### Media assets (5)
 
 | Tool | What it does |
 |---|---|
@@ -253,24 +232,18 @@ For social and local video work beyond plain download, install ffmpeg (`brew ins
 | `extractKeyframes` | Extract key frames from videos |
 | `mediaStoreHealth` | Storage usage and diagnostics |
 
-</details>
-
-<details>
-<summary><strong>Visual search and evidence (4)</strong></summary>
+### Visual search and evidence (4)
 
 | Tool | What it does |
 |---|---|
 | `indexVisualContent` | Extract frames; run Apple Vision OCR and feature prints, Gemini frame descriptions, and Gemini semantic embeddings |
 | `searchVisualContent` | Search frames by meaning and text; returns timestamped evidence and can open the external browser gallery |
 | `findSimilarFrames` | Image-to-image frame similarity using Apple Vision feature prints |
-| `renderVideoEvidence` | Return structured frame evidence everywhere and attach the inline Video Evidence Viewer for MCP Apps-capable hosts |
+| `renderVideoEvidence` | Return structured frame evidence everywhere and attach the inline VidLens Evidence Atlas for MCP Apps-capable hosts |
 
-Visual search is a dedicated index, separate from transcripts. Every match includes its timestamp, source video, OCR text, and visual description. The evidence viewer reads images through opaque MCP resources, so tool results never expose local frame paths.
+Visual search is a dedicated index, separate from transcripts. Every match includes its timestamp, source video, OCR text, and visual description. The Evidence Atlas reads images through opaque MCP resources, so tool results never expose local frame paths.
 
-</details>
-
-<details>
-<summary><strong>Comment knowledge base (6)</strong></summary>
+### Comment knowledge base (6)
 
 | Tool | What it does |
 |---|---|
@@ -281,18 +254,13 @@ Visual search is a dedicated index, separate from transcripts. Every match inclu
 | `clearActiveCommentCollection` | Search all comment collections |
 | `removeCommentCollection` | Delete a comment collection |
 
-</details>
-
-<details>
-<summary><strong>Diagnostics (3)</strong></summary>
+### Diagnostics (3)
 
 | Tool | What it does |
 |---|---|
 | `recallWorkspace` | Session-start digest of everything already imported — call first to avoid re-importing |
 | `checkSystemHealth` | Full system diagnostic report |
 | `checkImportReadiness` | Validate before importing content |
-
-</details>
 
 ---
 
@@ -411,8 +379,4 @@ npx vidlens-mcp doctor
 
 MIT
 
-<p align="center">
-  <a href="https://github.com/thatsrajan/vidlens-mcp">GitHub</a> ·
-  <a href="https://www.npmjs.com/package/vidlens-mcp">npm</a> ·
-  <a href="https://modelcontextprotocol.io/">Model Context Protocol</a>
-</p>
+[GitHub](https://github.com/thatsrajan/vidlens-mcp) · [npm](https://www.npmjs.com/package/vidlens-mcp) · [Model Context Protocol](https://modelcontextprotocol.io/)
