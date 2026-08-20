@@ -1,7 +1,7 @@
 {
   "name": "vidlens",
-  "version": "1.4.2",
-  "description": "Video intelligence for Codex and MCP clients: search, import, download, index, and visually search YouTube, social video URLs, generic URLs, and local video files.",
+  "version": "1.5.0",
+  "description": "Video intelligence for Codex and MCP clients: search, import, index, and inspect video evidence with portable structured results and an optional MCP App viewer.",
   "author": {
     "name": "Rajan",
     "url": "https://github.com/thatsrajan"
@@ -24,7 +24,7 @@
   "interface": {
     "displayName": "VidLens",
     "shortDescription": "Search and index video as local assets",
-    "longDescription": "VidLens turns online and local videos into searchable local assets for AI agents. It supports YouTube plus universal video source ingestion through the same MCP server used by Claude and Codex, with yt-dlp downloads, ffmpeg frame extraction, Apple Vision OCR/similarity, and optional Gemini descriptions and embeddings.",
+    "longDescription": "VidLens turns online and local videos into searchable local assets for AI agents. It supports YouTube plus universal video source ingestion through the same MCP server used by Claude and Codex, with yt-dlp downloads, ffmpeg frame extraction, Apple Vision OCR/similarity, optional Gemini descriptions and embeddings, structured terminal evidence, and an inline MCP App viewer in compatible hosts.",
     "developerName": "Rajan",
     "category": "Research",
     "capabilities": [
@@ -38,7 +38,7 @@
     "defaultPrompt": [
       "Import this video and make it searchable",
       "Search my local video assets",
-      "Find frames showing the benchmark chart"
+      "Show video evidence for the benchmark chart"
     ],
     "brandColor": "#EF4444",
     "composerIcon": "./assets/logo.png",

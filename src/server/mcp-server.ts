@@ -3,6 +3,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
   type CallToolRequest,
   type CallToolResult,
   type Tool,
@@ -20,6 +22,13 @@ import { ThumbnailExtractor } from "../lib/thumbnail-extractor.js";
 import { parseVideoId } from "../lib/id-parsing.js";
 import { generateVisualReport, openInBrowser, type VisualReportFrame } from "../lib/visual-report.js";
 import { Telemetry } from "../lib/telemetry.js";
+import {
+  buildVideoEvidenceView,
+  EvidenceFrameResourceStore,
+  loadVideoEvidenceAppHtml,
+  MCP_APP_MIME_TYPE,
+  VIDEO_EVIDENCE_APP_URI,
+} from "../lib/mcp-app.js";
 import type { ProgressReporter } from "../lib/progress.js";
 import type { ServiceOptions } from "../lib/types.js";
 
@@ -679,6 +688,50 @@ export const tools: Tool[] = [
     },
   },
   {
+    name: "renderVideoEvidence",
+    title: "Show VidLens video evidence",
+    description: "Use this when the user wants to inspect visual-search matches in an interactive evidence viewer. Queries an existing visual index without downloading or indexing media. In MCP Apps hosts it renders keyframes, scores, OCR, descriptions, filters, and timestamp actions inline; Codex and Claude Code terminals receive the same evidence as structured text/JSON. If no visual index exists, call indexVisualContent first. [~1-3s]",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Visual search query, e.g. 'benchmark chart' or 'whiteboard architecture diagram'" },
+        videoIdOrUrl: { type: "string", description: "Optional video scope. The video must already be visually indexed." },
+        maxResults: { type: "number", minimum: 1, maximum: 12 },
+        minScore: { type: "number", minimum: 0, maximum: 1 },
+        dryRun: { type: "boolean" },
+      },
+      required: ["query"],
+      additionalProperties: false,
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        kind: { type: "string", enum: ["vidlens.video-evidence"] },
+        schemaVersion: { type: "number", enum: [1] },
+        query: { type: "string" },
+        resultCount: { type: "number" },
+        frames: { type: "array", items: { type: "object" } },
+        searchMeta: { type: "object" },
+        limitations: { type: "array", items: { type: "string" } },
+      },
+      required: ["kind", "schemaVersion", "query", "resultCount", "frames", "searchMeta", "limitations"],
+      additionalProperties: true,
+    },
+    annotations: {
+      title: "Show VidLens video evidence",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    _meta: {
+      ui: { resourceUri: VIDEO_EVIDENCE_APP_URI },
+      "openai/outputTemplate": VIDEO_EVIDENCE_APP_URI,
+      "openai/toolInvocation/invoking": "Preparing video evidence…",
+      "openai/toolInvocation/invoked": "Video evidence ready",
+    },
+  },
+  {
     name: "findSimilarFrames",
     description: "Find frames that visually look like a reference frame using Apple Vision image feature prints. Accepts a frame assetId or a direct framePath and returns image-backed matches. [~30-60s, vision comparison]",
     inputSchema: {
@@ -857,6 +910,7 @@ const TIMING_TIER: Record<string, string> = {
   importVideoSources: "slow", transcribeVideoSource: "slow",
   downloadAsset: "heavy", extractKeyframes: "heavy", indexVisualContent: "heavy",
   searchVisualContent: "heavy", findSimilarFrames: "heavy",
+  renderVideoEvidence: "fast",
   listCollections: "instant", setActiveCollection: "instant", clearActiveCollection: "instant",
   listCommentCollections: "instant", setActiveCommentCollection: "instant",
   clearActiveCommentCollection: "instant", removeCollection: "instant",
@@ -876,6 +930,7 @@ export function createYouTubeMcpServer(service = new YouTubeService()): Server {
   const getThumbnailExtractor = (): ThumbnailExtractor =>
     thumbnailExtractor ??= new ThumbnailExtractor(getMediaStore());
   const telemetry = new Telemetry();
+  const evidenceFrameResources = new EvidenceFrameResourceStore();
 
   const server = new Server(
     {
@@ -885,11 +940,59 @@ export function createYouTubeMcpServer(service = new YouTubeService()): Server {
     {
       capabilities: {
         tools: {},
+        resources: {},
       },
     },
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
+
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources: [
+      {
+        uri: VIDEO_EVIDENCE_APP_URI,
+        name: "VidLens Video Evidence Viewer",
+        description: "Interactive MCP Apps viewer for keyframes, OCR, scores, provenance, and timestamp actions.",
+        mimeType: MCP_APP_MIME_TYPE,
+        _meta: {
+          ui: {
+            csp: { connectDomains: [], resourceDomains: [] },
+            prefersBorder: true,
+          },
+          "openai/widgetDescription": "Interactive VidLens visual evidence viewer with keyframes, OCR, confidence scores, filters, and source timestamps.",
+        },
+      },
+      ...evidenceFrameResources.list(),
+    ],
+  }));
+
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const uri = request.params.uri;
+    if (uri === VIDEO_EVIDENCE_APP_URI) {
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: MCP_APP_MIME_TYPE,
+            text: loadVideoEvidenceAppHtml(),
+            _meta: {
+              ui: {
+                csp: { connectDomains: [], resourceDomains: [] },
+                prefersBorder: true,
+              },
+              "openai/widgetDescription": "Interactive VidLens visual evidence viewer with keyframes, OCR, confidence scores, filters, and source timestamps.",
+            },
+          },
+        ],
+      };
+    }
+
+    const frame = evidenceFrameResources.read(uri);
+    if (!frame) {
+      throw new Error(`Unknown or expired VidLens resource: ${uri}`);
+    }
+    return { contents: [frame] };
+  });
 
   server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest, extra): Promise<CallToolResult> => {
     const args = parseArgs(request.params.arguments);
@@ -931,6 +1034,19 @@ export function createYouTubeMcpServer(service = new YouTubeService()): Server {
         success: true,
         timestamp: Date.now(),
       });
+
+      // Visual search: auto-generate HTML gallery, strip framePaths from JSON
+      if (toolName === "renderVideoEvidence") {
+        const view = buildVideoEvidenceView(resultObj, evidenceFrameResources);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(view, null, 2) }],
+          structuredContent: view,
+          _meta: {
+            evidenceResourceCount: view.frames.filter((frame) => frame.imageUri).length,
+            hostFallback: "Structured evidence is available when inline MCP Apps rendering is unavailable.",
+          },
+        };
+      }
 
       // Visual search: auto-generate HTML gallery, strip framePaths from JSON
       if (toolName === "searchVisualContent" || toolName === "findSimilarFrames") {
@@ -1559,6 +1675,18 @@ async function executeTool(
           downloadFormat: optionalEnum(args, "downloadFormat", ["best_video", "worst_video"]),
           includeGeminiDescriptions: optionalBoolean(args, "includeGeminiDescriptions"),
           includeGeminiEmbeddings: optionalBoolean(args, "includeGeminiEmbeddings"),
+        },
+        serviceOptions,
+      );
+
+    case "renderVideoEvidence":
+      return service.searchVisualContent(
+        {
+          query: readString(args, "query"),
+          videoIdOrUrl: optionalString(args, "videoIdOrUrl"),
+          maxResults: optionalNumber(args, "maxResults"),
+          minScore: optionalNumber(args, "minScore"),
+          autoIndexIfNeeded: false,
         },
         serviceOptions,
       );

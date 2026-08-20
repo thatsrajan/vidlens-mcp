@@ -14,7 +14,7 @@
 
 VidLens is an [MCP](https://modelcontextprotocol.io/) server that gives your AI agent eyes on video — YouTube, X, TikTok, Instagram, other video pages, or a file on your disk. Paste a link and ask a question. VidLens reads the transcript, looks at the frames, and answers with timestamps you can check. Everything it ingests lands in a library on your own machine, so your agent never has to watch the same video twice.
 
-No API keys to start. Works in Claude Desktop, Claude Code, and Codex.
+No API keys to start. Works in Claude Desktop, Claude Code, and Codex. Compatible graphical MCP hosts can also render VidLens's evidence viewer inline.
 
 ```bash
 npx vidlens-mcp setup
@@ -37,6 +37,17 @@ A single public X, Instagram, or TikTok video URL usually needs no API key at al
 > "Find the frame in this video where they show the benchmark chart."
 
 Visual search looks at what is on screen — slides, charts, whiteboards, product shots — and returns the actual frame image with its timestamp, not just a text guess.
+
+### One tool, two presentation modes
+
+`renderVideoEvidence` keeps the research result portable instead of making the UI a requirement.
+
+| Host | What you get |
+|---|---|
+| MCP Apps-capable graphical host | An inline, sandboxed evidence viewer with frame cards, OCR/match filters, source links, fullscreen, and follow-up prompts |
+| Codex CLI or Claude Code terminal | The same evidence as structured text/JSON, including timestamps, scores, OCR, descriptions, provenance, and limitations |
+
+Terminal clients do not need to render HTML for the tool to work. If a host does not support inline MCP Apps, VidLens simply uses the structured fallback; `searchVisualContent` can still open its existing external browser gallery when requested.
 
 ---
 
@@ -143,7 +154,7 @@ For social and local video work beyond plain download, install ffmpeg (`brew ins
 
 ---
 
-## The tools — 47 across 11 modules
+## The tools — 48 across 11 modules
 
 <details>
 <summary><strong>Explore — YouTube discovery and research (1)</strong></summary>
@@ -245,15 +256,16 @@ For social and local video work beyond plain download, install ffmpeg (`brew ins
 </details>
 
 <details>
-<summary><strong>Visual search (3)</strong></summary>
+<summary><strong>Visual search and evidence (4)</strong></summary>
 
 | Tool | What it does |
 |---|---|
 | `indexVisualContent` | Extract frames; run Apple Vision OCR and feature prints, Gemini frame descriptions, and Gemini semantic embeddings |
-| `searchVisualContent` | Search frames by meaning and text; returns actual image paths and timestamps as evidence |
+| `searchVisualContent` | Search frames by meaning and text; returns timestamped evidence and can open the external browser gallery |
 | `findSimilarFrames` | Image-to-image frame similarity using Apple Vision feature prints |
+| `renderVideoEvidence` | Return structured frame evidence everywhere and attach the inline Video Evidence Viewer for MCP Apps-capable hosts |
 
-Visual search is a dedicated index, separate from transcripts. Every match returns the frame path on disk, its timestamp, the source video, OCR text, and a visual description — evidence you can open and check.
+Visual search is a dedicated index, separate from transcripts. Every match includes its timestamp, source video, OCR text, and visual description. The evidence viewer reads images through opaque MCP resources, so tool results never expose local frame paths.
 
 </details>
 

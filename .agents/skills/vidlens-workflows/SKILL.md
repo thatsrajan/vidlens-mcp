@@ -67,6 +67,9 @@ MCP launcher's env/config if needed, restart the MCP server/client, and verify c
 - **`importComments`** does the same for comments (searchable via `searchComments`).
 - **`indexVisualContent`** builds a persistent visual index (frames + OCR + optional Gemini
   descriptions/embeddings), queryable via `searchVisualContent`.
+- **`renderVideoEvidence`** presents an existing visual search as an inline evidence viewer in
+  MCP Apps-capable graphical hosts. Codex CLI and Claude Code receive the same result as structured
+  text/JSON, so never treat inline HTML rendering as required for the workflow.
 
 ## Fallback tiers — what works without keys, what improves with them
 

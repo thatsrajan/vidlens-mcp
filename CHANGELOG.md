@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-08-20
+
+### Added
+- `renderVideoEvidence`, a read-only visual-search tool that returns portable structured evidence and attaches a sandboxed MCP App resource for compatible iframe hosts.
+- A responsive Video Evidence Viewer with frame-resource loading, OCR and match filters, source/timestamp actions, host theme and safe-area support, fullscreen, and follow-up prompts.
+- Protocol tests for tool metadata, resource discovery, app loading, structured fallback output, opaque frame resources, and local-path redaction.
+
+### Changed
+- VidLens now exposes 48 tools. Codex CLI and Claude Code receive the same evidence as text/JSON when they cannot render an inline MCP App; the existing browser-gallery workflow remains available.
+- The MCP server advertises resources and packages the self-contained app HTML without external scripts, styles, or network domains.
+
 ## [1.4.2] - 2026-08-19
 
 This release makes individual social-video research practical without requiring a paid scraper API, while keeping the limits visible. It also refreshes the public documentation and Codex plugin for distribution.

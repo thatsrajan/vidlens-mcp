@@ -1,17 +1,17 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.thatsrajan/vidlens-mcp",
-  "description": "Video as a queryable local asset for AI agents — 47 tools for YouTube, social, and local media.",
+  "description": "Video as a queryable local asset for AI agents — 48 tools plus an optional MCP App evidence viewer.",
   "repository": {
     "url": "https://github.com/thatsrajan/vidlens-mcp",
     "source": "github"
   },
-  "version": "1.4.2",
+  "version": "1.5.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "vidlens-mcp",
-      "version": "1.4.2",
+      "version": "1.5.0",
       "transport": {
         "type": "stdio"
       },

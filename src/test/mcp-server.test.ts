@@ -68,6 +68,7 @@ test("public MCP surface uses intent-based tool names", () => {
     // Visual Search
     "indexVisualContent",
     "searchVisualContent",
+    "renderVideoEvidence",
     "findSimilarFrames",
     // Comment Knowledge Base
     "importComments",

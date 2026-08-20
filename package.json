@@ -1,8 +1,8 @@
 {
   "name": "vidlens-mcp",
   "mcpName": "io.github.thatsrajan/vidlens-mcp",
-  "version": "1.4.2",
-  "description": "VidLens MCP — video as a queryable local asset for AI agents. 47 tools across YouTube, social video URLs, local media, semantic search, transcription, and visual search.",
+  "version": "1.5.0",
+  "description": "VidLens MCP — video as a queryable local asset for AI agents. 48 tools across YouTube, social video URLs, local media, semantic search, transcription, visual search, and an optional MCP App evidence viewer.",
   "repository": {
     "type": "git",
     "url": "https://github.com/thatsrajan/vidlens-mcp.git"
@@ -20,6 +20,7 @@
   "files": [
     "dist/**/*.js",
     "dist/**/*.d.ts",
+    "dist/**/*.html",
     "!dist/**/*.map",
     "!dist/test/**",
     "!dist/**/*conflicted copy*",
@@ -31,8 +32,9 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "dev": "tsx src/cli.ts",
+    "build": "tsc -p tsconfig.json && npm run build:ui",
+    "build:ui": "node scripts/build-mcp-app.mjs",
+    "dev": "npm run build:ui --silent && tsx src/cli.ts",
     "setup": "npm run build --silent && node dist/cli.js setup",
     "doctor": "npm run build --silent && node dist/cli.js doctor",
     "update-deps": "npm run build --silent && node dist/cli.js update-deps",
@@ -75,7 +77,9 @@
     "execa": "^9.6.0"
   },
   "devDependencies": {
+    "@modelcontextprotocol/ext-apps": "^1.7.5",
     "@types/node": "^24.3.0",
+    "esbuild": "^0.28.2",
     "tsx": "^4.20.4",
     "typescript": "^5.9.2"
   }

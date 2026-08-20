@@ -11,7 +11,7 @@ const RESET = "\x1b[0m";
  * Number of MCP tools exposed by the server. Single source of truth for every
  * banner surface (server startup, `setup` wizard, plain-text help).
  */
-export const TOOL_COUNT = 47;
+export const TOOL_COUNT = 48;
 
 /**
  * Render the banner. Pass `version` to append it after the product name (used by
