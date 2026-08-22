@@ -53,7 +53,9 @@ VidLens returns portable structured evidence: sources, timestamps, scores, OCR, 
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/demo/demo-doac.gif?v=20260822" alt="A prompt asks VidLens to compare the latest three Diary of a CEO episodes; the agent works through them and renders an inline report with view charts, per-episode sentiment bars, and a source provenance footer" width="800" />
-</p> This presentation belongs to the client rather than an embedded VidLens UI. For extracted frame inspection, `searchVisualContent` can also open the existing external browser gallery.
+</p>
+
+The presentation belongs to the client rather than an embedded VidLens UI. For extracted-frame inspection, `searchVisualContent` can also open the browser gallery.
 
 ---
 
@@ -82,7 +84,12 @@ Everything lives in one directory on your disk. No external database, no Docker.
 npx vidlens-mcp setup
 ```
 
-The wizard detects supported MCP clients (Claude Desktop, Claude Code, and Codex), installs the free local dependencies it needs, and explains which optional upgrades apply to your use case. Normal setup does not ask for API keys, speech-to-text providers, web search, or cookies; use `--advanced` when you want those. For Claude Code, setup registers VidLens in the user MCP registry, installs the shared VidLens workflow skill, and checks the MCP result with `claude mcp list` when possible.
+The wizard detects Claude Desktop, Claude Code, and Codex, checks the local dependencies VidLens needs, and offers one simple choice:
+
+- **Free setup (recommended):** no API keys. YouTube search, transcripts, metadata, and the local library work immediately.
+- **Enhanced setup:** add optional APIs, speech-to-text, web search, or browser cookies one at a time. Press Enter to skip anything you do not need; saved values are kept and never shown.
+
+Press Enter to choose Free, or run `npx vidlens-mcp setup --enhanced` whenever you want Enhanced capabilities. For Claude Code, setup also registers VidLens in the user MCP registry, installs the shared VidLens workflow skill, and checks the result with `claude mcp list` when possible.
 
 ### Manual configuration
 
@@ -287,11 +294,11 @@ VidLens works without any keys. Add them for scale and reliability:
 > ⚠️ **The YouTube and Gemini keys are separate keys from separate Google services.** A Gemini key will not work for YouTube API calls, and vice versa.
 
 ```bash
-# Free-core setup asks for no keys.
+# Free setup asks for no keys.
 npx vidlens-mcp setup
 
-# Advanced setup optionally prompts for keys, STT, web search, and cookies.
-npx vidlens-mcp setup --advanced
+# Enhanced setup optionally prompts for keys, STT, web search, and cookies.
+npx vidlens-mcp setup --enhanced
 
 # Or pass everything non-interactively.
 npx vidlens-mcp setup \
@@ -348,7 +355,7 @@ npx vidlens-mcp version       # Print version
 ## Security and privacy
 
 - Your library — transcripts, frames, embeddings, media — is stored locally and stays on your machine. Network calls go only to the sources you query and the APIs you configure.
-- Setup stores configured keys in your local MCP client configuration. Prefer the interactive advanced setup; keys supplied as CLI flags may remain in shell history. Error messages pass through a secret redactor so keys and cookie paths are not echoed in tool output.
+- Setup stores configured keys in your local MCP client configuration. Prefer the interactive Enhanced setup, which masks key entry; keys supplied as CLI flags may remain in shell history. Error messages pass through a secret redactor so keys and cookie paths are not echoed in tool output.
 - Fetches of channel pages and generic URLs reject private, link-local, and loopback addresses (SSRF guard). Escape hatch for intentional local use: `VIDLENS_ALLOW_PRIVATE_URLS=1`.
 
 ---

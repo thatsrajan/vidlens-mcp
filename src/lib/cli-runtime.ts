@@ -1,7 +1,8 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
+import { Writable } from "node:stream";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import {
@@ -16,7 +17,7 @@ import {
   type ClientDetectionSummary,
   type KnownClientId,
 } from "./install-diagnostics.js";
-import { mergeTomlTables, type TomlValue } from "./toml-writer.js";
+import { mergeTomlTables, removeTomlTables, type TomlValue } from "./toml-writer.js";
 import { renderBanner } from "./banner.js";
 import type { YouTubeService } from "./youtube-service.js";
 
@@ -42,6 +43,13 @@ export interface UpsertConfigResult {
   created: boolean;
   backupPath?: string;
   configText: string;
+}
+
+export interface ManagedSkillInstallResult {
+  sourcePath: string;
+  targetPath: string;
+  status: "installed" | "unchanged" | "preview" | "source_missing";
+  backupPath?: string;
 }
 
 export interface CommandResult {
@@ -96,6 +104,8 @@ export interface CliDeps {
   /** Whether stdin is an interactive TTY. Non-interactive runs never auto-consent. */
   interactive: boolean;
   promptLine: (question: string) => Promise<string>;
+  /** Prompt for a secret without echoing its value in an interactive terminal. */
+  promptSecret: (question: string) => Promise<string>;
   runCommand: (command: string, args: string[], options?: { env?: NodeJS.ProcessEnv; timeoutMs?: number }) => CommandResult;
 }
 
@@ -191,18 +201,27 @@ export async function runCli(args: string[], deps: Partial<CliDeps> = {}): Promi
         resolvedDeps.writeStderr(`    Install: ${ffmpegInstallHint(resolvedDeps.platform)}\n\n`);
       }
 
-      resolvedDeps.writeStderr(setupSection("Capability uplift"));
-      resolvedDeps.writeStderr(setupHelp("VidLens starts free: public YouTube transcripts/search/metadata use yt-dlp and do not need API keys."));
-      resolvedDeps.writeStderr(setupHelp("More video types need more helpers: social/local video often needs ffmpeg, cookies, STT, and/or web discovery."));
-      resolvedDeps.writeStderr(setupHelp("Keys are only stored when you pass them or run --advanced; setup will not pull them from your shell."));
-      resolvedDeps.writeStderr(setupItem("YOUTUBE_API_KEY", "Better YouTube metadata, API search, subscriber counts; YouTube basics still work without it."));
-      resolvedDeps.writeStderr(setupItem("GEMINI_API_KEY", "Semantic search, visual search, AI frame descriptions, and Gemini STT fallback."));
-      resolvedDeps.writeStderr(setupItem("OPENAI_API_KEY", "Speech-to-text fallback for X/Instagram/TikTok, generic URLs, and local video files with no captions."));
-      resolvedDeps.writeStderr(setupItem("SCRAPECREATORS_API_KEY", "Direct social search/trending across TikTok, Instagram, Threads, Pinterest, Reddit, and supported ScrapeCreators endpoints."));
-      resolvedDeps.writeStderr(setupItem("BRAVE_API_KEY or SERPAPI_KEY", "Structured web discovery for finding X/Instagram/TikTok/generic video URLs by query."));
-      resolvedDeps.writeStderr(setupItem("Browser cookies", "Access to logged-in, gated, age-limited, or rate-limited social video URLs."));
+      const suppliedOptionalSettings = hasSuppliedOptionalSettings(parsed);
+      if (!parsed.advancedSetup && !suppliedOptionalSettings && resolvedDeps.interactive) {
+        resolvedDeps.writeStderr(setupSection("Choose your setup"));
+        resolvedDeps.writeStderr(setupItem("1. Free setup (recommended)", "No API keys. YouTube search, transcripts, metadata, and the local library work immediately."));
+        resolvedDeps.writeStderr(setupItem("2. Enhanced setup", "Add optional services one at a time for richer search, visual analysis, transcription, and social discovery."));
+        resolvedDeps.writeStderr(setupHelp("Press Enter for Free. Enhanced items can be skipped, and saved values are kept and never shown."));
+        const selection = (await resolvedDeps.promptLine("    Select [1]: ")).trim().toLowerCase();
+        parsed.advancedSetup = selection === "2" || selection === "e" || selection === "enhanced";
+        resolvedDeps.writeStderr("\n");
+      }
 
       if (parsed.advancedSetup) {
+        resolvedDeps.writeStderr(setupSection("Enhanced setup"));
+        resolvedDeps.writeStderr(setupHelp("Every service is optional. Press Enter to skip anything you do not need."));
+        resolvedDeps.writeStderr(setupHelp("Secrets are entered without echo and stored only in the generated local client configuration."));
+        resolvedDeps.writeStderr(setupItem("YouTube API", "Better YouTube metadata, API search, subscriber counts; YouTube basics still work without it."));
+        resolvedDeps.writeStderr(setupItem("Gemini", "Semantic search, visual search, AI frame descriptions, and Gemini STT fallback."));
+        resolvedDeps.writeStderr(setupItem("OpenAI", "Speech-to-text fallback for social, generic, and local videos without captions."));
+        resolvedDeps.writeStderr(setupItem("ScrapeCreators", "Direct social search and trending across supported platforms."));
+        resolvedDeps.writeStderr(setupItem("Web search", "Structured discovery for X, Instagram, TikTok, and generic video URLs."));
+        resolvedDeps.writeStderr(setupItem("Browser cookies", "Optional access to logged-in, gated, age-limited, or rate-limited video URLs."));
         const hasYoutubeKey = Boolean(parsed.youtubeApiKey || savedSetupEnv.YOUTUBE_API_KEY);
         const hasGeminiKey = Boolean(parsed.geminiApiKey || savedSetupEnv.GEMINI_API_KEY || parsed.googleApiKey || savedSetupEnv.GOOGLE_API_KEY);
         const hasOpenAiKey = Boolean(parsed.openaiApiKey || savedSetupEnv.OPENAI_API_KEY);
@@ -219,39 +238,39 @@ export async function runCli(args: string[], deps: Partial<CliDeps> = {}): Promi
         if (!hasYoutubeKey) {
           resolvedDeps.writeStderr(setupItem("YOUTUBE_API_KEY", "Better metadata, API search, subscriber counts."));
           resolvedDeps.writeStderr(setupHelp("Get one free: https://console.cloud.google.com/apis/credentials"));
-          const key = await resolvedDeps.promptLine("    Key [Enter to skip]: ");
+          const key = await resolvedDeps.promptSecret("    Key [Enter to skip]: ");
           if (key) parsed.youtubeApiKey = key;
           resolvedDeps.writeStderr("\n");
         }
         if (!hasGeminiKey) {
           resolvedDeps.writeStderr(setupItem("GEMINI_API_KEY", "Semantic search, visual search, AI descriptions, Gemini STT."));
           resolvedDeps.writeStderr(setupHelp("Get one free: https://aistudio.google.com/apikey"));
-          const key = await resolvedDeps.promptLine("    Key [Enter to skip]: ");
+          const key = await resolvedDeps.promptSecret("    Key [Enter to skip]: ");
           if (key) parsed.geminiApiKey = key;
           resolvedDeps.writeStderr("\n");
         }
         if (!hasOpenAiKey) {
           resolvedDeps.writeStderr(setupItem("OPENAI_API_KEY", "OpenAI speech-to-text fallback for social, generic, and local videos."));
           resolvedDeps.writeStderr(setupHelp("Get one: https://platform.openai.com/api-keys"));
-          const key = await resolvedDeps.promptLine("    Key [Enter to skip]: ");
+          const key = await resolvedDeps.promptSecret("    Key [Enter to skip]: ");
           if (key) parsed.openaiApiKey = key;
           resolvedDeps.writeStderr("\n");
         }
         if (!hasScrapeCreatorsKey) {
           resolvedDeps.writeStderr(setupItem("SCRAPECREATORS_API_KEY", "ScrapeCreators social search/trending for TikTok, Instagram, Threads, Pinterest, Reddit, and supported platforms."));
           resolvedDeps.writeStderr(setupHelp("Get one: https://app.scrapecreators.com"));
-          const key = await resolvedDeps.promptLine("    Key [Enter to skip]: ");
+          const key = await resolvedDeps.promptSecret("    Key [Enter to skip]: ");
           if (key) parsed.scrapeCreatorsApiKey = key;
           resolvedDeps.writeStderr("\n");
         }
         if (!hasWebSearchChoice) {
           resolvedDeps.writeStderr(setupItem("Web search discovery", "Finds X/Instagram/TikTok URLs by query."));
           resolvedDeps.writeStderr(setupHelp("Recommended: paste BRAVE_API_KEY if you have one; otherwise press Enter."));
-          const brave = await resolvedDeps.promptLine("    BRAVE_API_KEY [Enter to skip]: ");
+          const brave = await resolvedDeps.promptSecret("    BRAVE_API_KEY [Enter to skip]: ");
           if (brave) {
             parsed.braveApiKey = brave;
           } else {
-            const serp = await resolvedDeps.promptLine("    SERPAPI_KEY [Enter to skip]: ");
+            const serp = await resolvedDeps.promptSecret("    SERPAPI_KEY [Enter to skip]: ");
             if (serp) parsed.serpapiKey = serp;
           }
           resolvedDeps.writeStderr("\n");
@@ -336,7 +355,13 @@ export async function runCli(args: string[], deps: Partial<CliDeps> = {}): Promi
         }
         resolvedDeps.writeStderr("\n");
       } else {
-        resolvedDeps.writeStderr(setupHelp("Continuing with free core setup. Use --advanced to add capability-uplift keys/cookies now."));
+        resolvedDeps.writeStderr(setupSection("Free setup"));
+        resolvedDeps.writeStderr(setupHelp("No API keys required. YouTube search, transcripts, metadata, and the local library work immediately."));
+        if (suppliedOptionalSettings) {
+          resolvedDeps.writeStderr(setupHelp("Applying the optional settings supplied on the command line without prompting for anything else."));
+        } else {
+          resolvedDeps.writeStderr(setupHelp("Run npx vidlens-mcp setup --enhanced any time to add optional services."));
+        }
         resolvedDeps.writeStderr("\n");
       }
       // If running via npx and no global binary exists, offer to install globally
@@ -424,7 +449,7 @@ export function parseCliArgs(argv: string[]): ParsedCliArgs {
       continue;
     }
 
-    if (token === "--advanced" || token === "--advanced-setup" || token === "--configure-optional") {
+    if (token === "--enhanced" || token === "--advanced" || token === "--advanced-setup" || token === "--configure-optional") {
       parsed.advancedSetup = true;
       continue;
     }
@@ -907,11 +932,14 @@ export function upsertCodexConfig(options: {
   configPath: string;
   existingText?: string;
   entry: McpServerEntry;
-  pluginPath: string;
+  marketplacePath: string;
   printOnly?: boolean;
   now?: Date;
 }): UpsertConfigResult {
-  const nextText = mergeTomlTables(options.existingText, buildCodexTables(options.entry, options.pluginPath));
+  const migratedText = options.existingText === undefined
+    ? undefined
+    : removeTomlTables(options.existingText, ["marketplaces.vidlens", 'plugins."vidlens@vidlens"']);
+  const nextText = mergeTomlTables(migratedText, buildCodexTables(options.entry, options.marketplacePath));
   const changed = options.existingText !== nextText;
   const created = !options.existingText;
 
@@ -935,17 +963,17 @@ export function upsertCodexConfig(options: {
   };
 }
 
-function buildCodexTables(entry: McpServerEntry, pluginPath: string): Record<string, Record<string, TomlValue>> {
+function buildCodexTables(entry: McpServerEntry, marketplacePath: string): Record<string, Record<string, TomlValue>> {
   const tables: Record<string, Record<string, TomlValue>> = {
     "mcp_servers.vidlens-mcp": {
       command: entry.command,
       args: entry.args,
     },
-    "marketplaces.vidlens": {
+    "marketplaces.vidlens-local": {
       source_type: "local",
-      source: pluginPath,
+      source: marketplacePath,
     },
-    'plugins."vidlens@vidlens"': {
+    'plugins."vidlens@vidlens-local"': {
       enabled: true,
     },
   };
@@ -962,6 +990,84 @@ function resolvePluginPath(deps: CliDeps): string {
     return checkoutPlugin;
   }
   return join(process.cwd(), "plugins", "vidlens");
+}
+
+function resolveMarketplacePath(deps: CliDeps): string {
+  return dirname(dirname(resolvePluginPath(deps)));
+}
+
+export function installClaudeCodeWorkflowSkill(options: {
+  sourcePath: string;
+  targetPath: string;
+  printOnly?: boolean;
+  now?: Date;
+}): ManagedSkillInstallResult {
+  if (!existsSync(options.sourcePath)) {
+    return {
+      sourcePath: options.sourcePath,
+      targetPath: options.targetPath,
+      status: "source_missing",
+    };
+  }
+
+  const sourceText = readFileSync(options.sourcePath, "utf8");
+  const existingText = existsSync(options.targetPath)
+    ? readFileSync(options.targetPath, "utf8")
+    : undefined;
+
+  if (existingText === sourceText) {
+    return {
+      sourcePath: options.sourcePath,
+      targetPath: options.targetPath,
+      status: "unchanged",
+    };
+  }
+
+  if (options.printOnly) {
+    return {
+      sourcePath: options.sourcePath,
+      targetPath: options.targetPath,
+      status: "preview",
+    };
+  }
+
+  mkdirSync(dirname(options.targetPath), { recursive: true });
+  let backupPath: string | undefined;
+  if (existingText !== undefined) {
+    const timestamp = (options.now ?? new Date()).toISOString().replace(/[:.]/g, "-");
+    backupPath = `${options.targetPath}.bak.${timestamp}`;
+    copyFileSync(options.targetPath, backupPath);
+    const backupPrefix = `${basename(options.targetPath)}.bak.`;
+    const backupNames = readdirSync(dirname(options.targetPath))
+      .filter((name) => name.startsWith(backupPrefix))
+      .sort();
+    for (const staleBackup of backupNames.slice(0, -3)) {
+      unlinkSync(join(dirname(options.targetPath), staleBackup));
+    }
+  }
+  writeFileSync(options.targetPath, sourceText, "utf8");
+
+  return {
+    sourcePath: options.sourcePath,
+    targetPath: options.targetPath,
+    status: "installed",
+    backupPath,
+  };
+}
+
+function describeManagedSkillInstall(result: ManagedSkillInstallResult): string {
+  switch (result.status) {
+    case "installed":
+      return result.backupPath
+        ? `updated at ${result.targetPath} (backup: ${result.backupPath})`
+        : `installed at ${result.targetPath}`;
+    case "unchanged":
+      return `already current at ${result.targetPath}`;
+    case "preview":
+      return `would install at ${result.targetPath}`;
+    case "source_missing":
+      return `bundled source missing at ${result.sourcePath}`;
+  }
 }
 
 function createCliDeps(overrides: Partial<CliDeps>): CliDeps {
@@ -994,6 +1100,7 @@ function createCliDeps(overrides: Partial<CliDeps>): CliDeps {
     isNpx: overrides.isNpx ?? isNpxInvocation(env, cliPath),
     interactive: overrides.interactive ?? Boolean(process.stdin.isTTY),
     promptLine: overrides.promptLine ?? defaultPromptLine,
+    promptSecret: overrides.promptSecret ?? overrides.promptLine ?? defaultPromptSecret,
     runCommand: overrides.runCommand ?? defaultRunCommand,
   };
 }
@@ -1246,6 +1353,13 @@ function renderSetupReport(parsed: ParsedCliArgs, deps: CliDeps): string {
       lines.push(`    Universal: ${describeUniversalSetupEnv(entry.env)}`);
       lines.push(`    Config: ${claudeCodeConfigPath}`);
       lines.push(`    Method: ${describeClaudeCodeSetupMethod(result)}`);
+      const skillResult = installClaudeCodeWorkflowSkill({
+        sourcePath: join(resolvePluginPath(deps), "skills", "vidlens-workflows", "SKILL.md"),
+        targetPath: join(deps.homeDir, ".claude", "skills", "vidlens-workflows", "SKILL.md"),
+        printOnly: parsed.printOnly,
+        now: deps.now(),
+      });
+      lines.push(`    Workflow skill: ${describeManagedSkillInstall(skillResult)}`);
       if (!parsed.printOnly) {
         lines.push(`    Check: ${describeClaudeCodeCliInspection(result.cliInspection)}`);
       }
@@ -1278,7 +1392,7 @@ function renderSetupReport(parsed: ParsedCliArgs, deps: CliDeps): string {
       configPath: codexConfigPath,
       existingText,
       entry,
-      pluginPath: resolvePluginPath(deps),
+      marketplacePath: resolveMarketplacePath(deps),
       printOnly: parsed.printOnly,
       now: deps.now(),
     });
@@ -1461,7 +1575,8 @@ Common flags:
   --web-search-provider <id> Persist VIDLENS_WEB_SEARCH_PROVIDER (auto, brave, serpapi, duckduckgo, none)
   --stt-provider <id>        Persist VIDLENS_STT_PROVIDER (auto, whisper-cpp, gemini, openai, none)
   --cookies-from-browser <b> Persist browser cookie source for yt-dlp
-  --advanced                Setup: prompt for optional keys, STT, web search, and cookies
+  --enhanced                Setup: choose optional APIs, STT, web search, and cookies
+  --advanced                Alias for --enhanced
   --yes, -y                  Setup: consent to install prompts non-interactively (yt-dlp, global install)
   --no-live                  Doctor: skip live network validation probes
   --print-only               Setup: print generated config without writing files
@@ -1849,6 +1964,41 @@ function defaultPromptLine(question: string): Promise<string> {
       resolve(answer.trim());
     });
   });
+}
+
+function defaultPromptSecret(question: string): Promise<string> {
+  if (!process.stdin.isTTY) return Promise.resolve("");
+  let muted = false;
+  const output = new Writable({
+    write(chunk, encoding, callback) {
+      if (!muted) {
+        process.stderr.write(chunk, encoding as BufferEncoding, callback);
+      } else {
+        callback();
+      }
+    },
+  });
+  const rl = createInterface({ input: process.stdin, output, terminal: true });
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      muted = false;
+      rl.close();
+      process.stderr.write("\n");
+      resolve(answer.trim());
+    });
+    muted = true;
+  });
+}
+
+function hasSuppliedOptionalSettings(parsed: ParsedCliArgs): boolean {
+  return Boolean(
+    parsed.youtubeApiKey || parsed.geminiApiKey || parsed.googleApiKey ||
+    parsed.openaiApiKey || parsed.scrapeCreatorsApiKey || parsed.braveApiKey ||
+    parsed.serpapiKey || parsed.webSearchProvider || parsed.sttProvider ||
+    parsed.sttLanguageHint || parsed.whisperModelPath || parsed.cookiesFromBrowser ||
+    parsed.cookiesProfile || parsed.youtubeCookiesFile || parsed.xCookiesFile ||
+    parsed.instagramCookiesFile || parsed.tiktokCookiesFile
+  );
 }
 
 function defaultRunCommand(command: string, args: string[], options: { env?: NodeJS.ProcessEnv; timeoutMs?: number } = {}): CommandResult {

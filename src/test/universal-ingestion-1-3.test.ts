@@ -448,15 +448,29 @@ test("Deno managed download URL resolves supported platforms", () => {
 test("Codex setup TOML preserves unrelated blocks and writes MCP plus plugin registrations", () => {
   const result = upsertCodexConfig({
     configPath: "/tmp/config.toml",
-    existingText: "[profile]\nmodel = \"gpt-5\"\n",
+    existingText: [
+      "[profile]",
+      'model = "gpt-5"',
+      "",
+      "[marketplaces.vidlens]",
+      'source_type = "local"',
+      'source = "/repo/plugins/vidlens"',
+      "",
+      '[plugins."vidlens@vidlens"]',
+      "enabled = true",
+      "",
+    ].join("\n"),
     entry: { command: "npx", args: ["-y", "vidlens-mcp", "serve"], env: { VIDLENS_DATA_DIR: "/tmp/vidlens", SCRAPECREATORS_API_KEY: "sc-test" } },
-    pluginPath: "/repo/plugins/vidlens",
+    marketplacePath: "/repo",
     printOnly: true,
   });
   assert.match(result.configText, /\[profile\]/);
   assert.match(result.configText, /\[mcp_servers\.vidlens-mcp\]/);
-  assert.match(result.configText, /\[marketplaces\.vidlens\]/);
-  assert.match(result.configText, /\[plugins\."vidlens@vidlens"\]/);
+  assert.match(result.configText, /\[marketplaces\.vidlens-local\]/);
+  assert.match(result.configText, /source = "\/repo"/);
+  assert.match(result.configText, /\[plugins\."vidlens@vidlens-local"\]/);
+  assert.doesNotMatch(result.configText, /\[marketplaces\.vidlens\]/);
+  assert.doesNotMatch(result.configText, /\[plugins\."vidlens@vidlens"\]/);
   assert.match(result.configText, /VIDLENS_DATA_DIR = "\/tmp\/vidlens"/);
   assert.match(result.configText, /SCRAPECREATORS_API_KEY = "sc-test"/);
 });

@@ -1,7 +1,7 @@
 {
   "name": "vidlens-mcp",
   "mcpName": "io.github.thatsrajan/vidlens-mcp",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "VidLens MCP — 47 tools that turn online and local video into a queryable asset for AI agents.",
   "repository": {
     "type": "git",

@@ -30,9 +30,9 @@ That is the portable path for installed Codex users and does not depend on a loc
 
 ## Setup Helper
 
-`vidlens-mcp setup --client codex` writes the MCP server registration, a local plugin marketplace entry, and the `vidlens@vidlens` enablement block into `~/.codex/config.toml`.
+`vidlens-mcp setup --client codex` writes the MCP server registration, a local plugin marketplace entry, and the `vidlens@vidlens-local` enablement block into `~/.codex/config.toml`.
 
-VidLens starts with a free core: public YouTube transcripts/search/metadata use managed `yt-dlp` and do not need API keys. As you ask it to handle more kinds of video, some capabilities need an uplift:
+VidLens Free setup covers public YouTube transcripts, search, and metadata through managed `yt-dlp` without API keys. As you ask it to handle more kinds of video, some capabilities need an uplift:
 
 - `ffmpeg` / `ffprobe`: Instagram/TikTok/X reels, local video files, audio chunking, keyframe extraction, and visual indexing.
 - `YOUTUBE_API_KEY`: better YouTube metadata, API search, and subscriber counts.
@@ -53,15 +53,15 @@ For an individual social video, the distributed agent skill follows this order a
 Browser assistance is a client-side workflow, not a hidden scraper inside the MCP server. Codex or
 Claude installations without browser control still retain direct-URL and local-file ingestion.
 
-Normal setup explains this capability ladder but does not ask for API keys, STT providers, web-search providers, or cookies. Keys are only stored when you pass them explicitly or run the advanced setup flow.
+Interactive setup offers a simple choice: **Free** (recommended, no API keys) or **Enhanced**. Press Enter for Free. Enhanced walks through optional services one at a time, lets you skip any item, preserves saved values without displaying them, and masks API-key input.
 
 To intentionally add optional auth/search/STT/cookie settings, pass explicit flags such as `--openai-api-key`, `--brave-api-key`, or `--cookies-from-browser`, or run:
 
 ```sh
-vidlens-mcp setup --client codex --advanced
+vidlens-mcp setup --client codex --enhanced
 ```
 
-The advanced wizard can collect and persist optional YouTube, Gemini, OpenAI, Brave/SerpAPI, STT, browser-cookie, and platform-cookie settings into the generated MCP env block.
+The Enhanced wizard can collect and persist optional YouTube, Gemini, OpenAI, Brave/SerpAPI, STT, browser-cookie, and platform-cookie settings into the generated MCP env block. `--advanced` remains available as a compatibility alias.
 
 Use `--print-only` to review the TOML before writing. Secret values are redacted in review output.
 
@@ -71,7 +71,7 @@ For Claude Code, run:
 vidlens-mcp setup --client claude_code
 ```
 
-When the `claude` CLI is available and the config has no secret env values, setup registers VidLens through Claude Code's own user MCP registry with `claude mcp add-json --scope user`. If API keys or cookie settings are present, setup writes `~/.claude.json` directly so secrets are not passed through command arguments. Both paths check `claude mcp list` afterward when possible. After setup, start a new Claude Code session or rerun `/mcp`.
+When the `claude` CLI is available and the config has no secret env values, setup registers VidLens through Claude Code's own user MCP registry with `claude mcp add-json --scope user`. If API keys or cookie settings are present, setup writes `~/.claude.json` directly so secrets are not passed through command arguments. Both paths install or update the bundled `vidlens-workflows` skill under `~/.claude/skills/`, keeping timestamped backups of the three newest replaced copies, and check `claude mcp list` afterward when possible. After setup, start a new Claude Code session or rerun `/mcp`.
 
 Setup also checks for `ffmpeg` and `ffprobe`. They are strongly recommended for Instagram/TikTok/X reels, local video files, STT audio chunking, keyframe extraction, and visual indexing. On macOS:
 
@@ -80,7 +80,7 @@ brew install ffmpeg
 vidlens-mcp doctor --no-live
 ```
 
-Recommended advanced setup answers:
+Recommended Enhanced setup answers:
 
 - STT provider: press Enter for `auto`; setup checks local whisper.cpp, then Gemini, then OpenAI after you answer.
 - Default STT language hint: use `en` for mostly English videos, or press Enter to auto-detect.

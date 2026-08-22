@@ -22,11 +22,11 @@ export function mergeTomlTables(
     return `${rendered}\n`;
   }
 
-  const filtered = removeTables(existing, Object.keys(tables));
+  const filtered = removeTomlTables(existing, Object.keys(tables));
   return `${filtered.trimEnd()}\n\n${rendered}\n`;
 }
 
-function removeTables(input: string, tableNames: string[]): string {
+export function removeTomlTables(input: string, tableNames: string[]): string {
   const targets = new Set(tableNames);
   const lines = input.split(/\r?\n/);
   const output: string[] = [];

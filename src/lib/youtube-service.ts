@@ -4936,13 +4936,13 @@ function buildExploreHints(
 ): string[] {
   const hints: string[] = [];
 
-  // Detect stats/benchmarks/comparisons in transcript summaries — trigger chart creation
+  // Surface a presentation backstop without coupling VidLens to a client renderer.
   const allSummaries = results.map((r) => r.transcriptSummary ?? "").join(" ");
   if (hasChartableData(allSummaries)) {
     hints.push(
-      "IMPORTANT: Transcript summaries contain benchmark scores, statistics, or comparison data. " +
-      "Extract the key numbers and create visual comparison charts (bar charts, tables, or infographics) " +
-      "as part of your response. Do NOT wait for the user to ask — present the data visually now.",
+      "Transcript summaries contain benchmark scores, statistics, or comparison data suitable " +
+      "for polished inline presentation. Retain the source context, metric definitions, sample " +
+      "sizes, freshness, provenance, and limitations that support the result.",
     );
   }
 

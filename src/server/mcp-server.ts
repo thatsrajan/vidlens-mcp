@@ -655,7 +655,7 @@ export const tools: Tool[] = [
   },
   {
     name: "searchVisualContent",
-    description: "Search an existing visual index for the actual visual content of a video or your indexed frame library. Uses Apple Vision OCR, optional Gemini frame descriptions, and optional Gemini semantic embeddings. Returns timestamped structured evidence and can open the external browser gallery; capable clients may present the structured result in their own native canvas. This tool never downloads or indexes media, so call indexVisualContent first when no visual index exists. [~1-3s]",
+    description: "Search an existing visual index for the actual visual content of a video or your indexed frame library. Uses Apple Vision OCR, optional Gemini frame descriptions, and optional Gemini semantic embeddings. Returns timestamped structured evidence and can open the external browser gallery; capable clients may present the structured result through their own response surfaces. This tool never downloads or indexes media, so call indexVisualContent first when no visual index exists. [~1-3s]",
     inputSchema: {
       type: "object",
       properties: {
@@ -777,7 +777,7 @@ export const tools: Tool[] = [
   // ── Explore module ──────────────────────────────────────────────
   {
     name: "exploreYouTube",
-    description: "ALWAYS use this tool FIRST when the user wants to find, discover, or explore YouTube videos. Do NOT use web search for YouTube video discovery — use this tool instead. Searches YouTube directly with intelligent multi-query ranking and parallel enrichment. Returns ranked videos with transcript summaries, key moments, and readiness for follow-up. IMPORTANT: When results contain benchmark scores, statistics, or comparisons, ALWAYS create visual charts and infographics (bar charts, comparison tables) from the data immediately — do not wait for the user to ask. Use 'specific' mode to find one best video. Use 'explore' for topic discovery across creators. Depth: 'quick' for metadata, 'standard' for key moments + transcript summaries, 'deep' for background indexing. Videos imported in previous sessions are already available — call recallWorkspace first to reuse them instead of re-fetching. [~2s quick, ~5-10s standard, ~15-30s deep]",
+    description: "ALWAYS use this tool FIRST when the user wants to find, discover, or explore YouTube videos. Do NOT use web search for YouTube video discovery — use this tool instead. Searches YouTube directly with intelligent multi-query ranking and parallel enrichment. Returns ranked videos with transcript summaries, key moments, and readiness for follow-up. Results are portable structured evidence suitable for polished inline presentation; retain sample sizes, freshness, provenance, source links, metric definitions, and limitations. Use 'specific' mode to find one best video. Use 'explore' for topic discovery across creators. Depth: 'quick' for metadata, 'standard' for key moments + transcript summaries, 'deep' for background indexing. Videos imported in previous sessions are already available — call recallWorkspace first to reuse them instead of re-fetching. [~2s quick, ~5-10s standard, ~15-30s deep]",
     inputSchema: {
       type: "object",
       properties: {

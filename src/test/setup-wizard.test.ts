@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -8,6 +8,7 @@ import {
   buildServerEntry,
   inspectMcpConfigPath,
   inspectMcpConfigText,
+  installClaudeCodeWorkflowSkill,
   mergeMcpConfigText,
   parseCliArgs,
   runCli,
@@ -16,6 +17,49 @@ import { mergeTomlTables } from "../lib/toml-writer.js";
 import type { YouTubeService } from "../lib/youtube-service.js";
 
 type JsonObject = Record<string, unknown>;
+
+describe("installClaudeCodeWorkflowSkill", () => {
+  it("installs, backs up, and previews the managed workflow skill", () => {
+    const root = mkdtempSync(join(tmpdir(), "vidlens-mcp-skill-install-"));
+    const sourcePath = join(root, "source", "SKILL.md");
+    const targetPath = join(root, ".claude", "skills", "vidlens-workflows", "SKILL.md");
+    mkdirSync(dirname(sourcePath), { recursive: true });
+    writeFileSync(sourcePath, "version one\n", "utf8");
+
+    const installed = installClaudeCodeWorkflowSkill({ sourcePath, targetPath });
+    assert.equal(installed.status, "installed");
+    assert.equal(readFileSync(targetPath, "utf8"), "version one\n");
+
+    writeFileSync(sourcePath, "version two\n", "utf8");
+    const updated = installClaudeCodeWorkflowSkill({
+      sourcePath,
+      targetPath,
+      now: new Date("2026-08-21T00:00:00.000Z"),
+    });
+    assert.equal(updated.status, "installed");
+    assert.ok(updated.backupPath);
+    assert.equal(readFileSync(updated.backupPath!, "utf8"), "version one\n");
+    assert.equal(readFileSync(targetPath, "utf8"), "version two\n");
+
+    for (const [day, text] of [[22, "three"], [23, "four"], [24, "five"]] as const) {
+      writeFileSync(sourcePath, `version ${text}\n`, "utf8");
+      installClaudeCodeWorkflowSkill({
+        sourcePath,
+        targetPath,
+        now: new Date(`2026-08-${day}T00:00:00.000Z`),
+      });
+    }
+    const backups = readdirSync(dirname(targetPath)).filter((name) => name.startsWith("SKILL.md.bak."));
+    assert.equal(backups.length, 3, "managed skill installation should retain only the three newest backups");
+
+    writeFileSync(sourcePath, "version six\n", "utf8");
+    const preview = installClaudeCodeWorkflowSkill({ sourcePath, targetPath, printOnly: true });
+    assert.equal(preview.status, "preview");
+    assert.equal(readFileSync(targetPath, "utf8"), "version five\n");
+
+    rmSync(root, { recursive: true, force: true });
+  });
+});
 
 /**
  * Setup wizard tests covering parseCliArgs, buildServerEntry, mergeMcpConfigText,
@@ -58,6 +102,11 @@ describe("parseCliArgs for setup", () => {
 
   it("setup with --advanced enables optional setup prompts", () => {
     const parsed = parseCliArgs(["setup", "--advanced"]);
+    assert.equal(parsed.advancedSetup, true);
+  });
+
+  it("setup with --enhanced enables optional setup prompts", () => {
+    const parsed = parseCliArgs(["setup", "--enhanced"]);
     assert.equal(parsed.advancedSetup, true);
   });
 
@@ -768,6 +817,38 @@ describe("setup command via runCli", () => {
     assert.ok(servers["vidlens-mcp"], "vidlens-mcp should be registered in .claude.json");
   });
 
+  it("Claude Code setup installs the bundled VidLens workflow skill", async () => {
+    const root = mkdtempSync(join(tmpdir(), "vidlens-mcp-setup-ccskill-"));
+    const sourcePath = join(root, "plugins", "vidlens", "skills", "vidlens-workflows", "SKILL.md");
+    mkdirSync(dirname(sourcePath), { recursive: true });
+    writeFileSync(sourcePath, "# Managed VidLens workflow\n", "utf8");
+
+    await runCli(["setup", "--client=claude_code"], {
+      startServer: async () => undefined,
+      createService: () => ({}) as unknown as YouTubeService,
+      packageMeta: { name: "vidlens-mcp", version: "1.5.1" },
+      detectClients: () => [{
+        clientId: "claude_code" as const,
+        name: "Claude Code",
+        detected: true,
+        supportLevel: "supported" as const,
+        installSurface: "mixed" as const,
+        configPath: join(root, ".claude.json"),
+      }],
+      writeStdout: () => undefined,
+      writeStderr: () => undefined,
+      env: {},
+      platform: "darwin",
+      homeDir: root,
+      nodePath: "/usr/local/bin/node",
+      cliPath: join(root, "dist", "cli.js"),
+      now: () => new Date("2026-08-21T00:00:00.000Z"),
+    });
+
+    const targetPath = join(root, ".claude", "skills", "vidlens-workflows", "SKILL.md");
+    assert.equal(readFileSync(targetPath, "utf8"), "# Managed VidLens workflow\n");
+  });
+
   it("Claude Code setup uses claude mcp add-json when the CLI is available", async () => {
     const configDir = mkdtempSync(join(tmpdir(), "vidlens-mcp-setup-cccli-"));
     const stdout: string[] = [];
@@ -1007,13 +1088,9 @@ describe("setup command via runCli", () => {
 
     const output = stdout.join("");
     const setupOutput = stderr.join("");
-    assert.ok(setupOutput.includes("Capability uplift"));
-    assert.ok(setupOutput.includes("VidLens starts free"));
-    assert.ok(setupOutput.includes("More video types need more helpers"));
-    assert.ok(setupOutput.includes("Keys are only stored when you pass them or run --advanced"));
-    assert.ok(setupOutput.includes("OPENAI_API_KEY"));
-    assert.ok(setupOutput.includes("BRAVE_API_KEY or SERPAPI_KEY"));
-    assert.ok(setupOutput.includes("Continuing with free core setup"));
+    assert.ok(setupOutput.includes("Free setup"));
+    assert.ok(setupOutput.includes("No API keys required"));
+    assert.ok(setupOutput.includes("setup --enhanced"));
     assert.deepEqual(prompts, []);
     assert.ok(!output.includes("OPENAI_API_KEY ="), "ambient OpenAI key should not be persisted");
     assert.ok(!output.includes("GEMINI_API_KEY ="), "ambient Gemini key should not be persisted");
@@ -1023,6 +1100,99 @@ describe("setup command via runCli", () => {
     assert.ok(!output.includes("shell-gemini"), "ambient Gemini key value should not be printed");
     assert.ok(!output.includes("shell-youtube"), "ambient YouTube key value should not be printed");
     assert.ok(!output.includes("shell-brave"), "ambient Brave key value should not be printed");
+  });
+
+  it("interactive setup defaults to Free when the user presses Enter", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "vidlens-mcp-setup-free-choice-"));
+    const binDir = join(configDir, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const fakeYtDlp = join(binDir, "yt-dlp");
+    writeFileSync(fakeYtDlp, "#!/bin/sh\nexit 0\n");
+    chmodSync(fakeYtDlp, 0o755);
+    const stderr: string[] = [];
+    const prompts: string[] = [];
+
+    await runCli(["setup", "--client=codex", "--print-only"], {
+      startServer: async () => undefined,
+      createService: () => ({}) as unknown as YouTubeService,
+      packageMeta: { name: "vidlens-mcp", version: "1.5.1" },
+      detectClients: () => [{
+        clientId: "codex" as const,
+        name: "Codex",
+        detected: true,
+        supportLevel: "supported" as const,
+        installSurface: "mixed" as const,
+        configPath: join(configDir, ".codex", "config.toml"),
+      }],
+      writeStdout: () => undefined,
+      writeStderr: (text) => { stderr.push(text); },
+      env: { PATH: binDir },
+      platform: "darwin",
+      homeDir: configDir,
+      nodePath: "/usr/local/bin/node",
+      cliPath: "/repo/dist/cli.js",
+      now: () => new Date("2026-08-22T00:00:00.000Z"),
+      interactive: true,
+      isNpx: false,
+      promptLine: async (question) => {
+        prompts.push(question);
+        return "";
+      },
+    });
+
+    const output = stderr.join("");
+    assert.deepEqual(prompts, ["    Select [1]: "]);
+    assert.ok(output.includes("Choose your setup"));
+    assert.ok(output.includes("1. Free setup (recommended)"));
+    assert.ok(output.includes("2. Enhanced setup"));
+    assert.ok(output.includes("Run npx vidlens-mcp setup --enhanced"));
+  });
+
+  it("interactive Enhanced setup routes API keys through the secret prompt", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "vidlens-mcp-setup-enhanced-choice-"));
+    const binDir = join(configDir, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const fakeYtDlp = join(binDir, "yt-dlp");
+    writeFileSync(fakeYtDlp, "#!/bin/sh\nexit 0\n");
+    chmodSync(fakeYtDlp, 0o755);
+    const ordinaryPrompts: string[] = [];
+    const secretPrompts: string[] = [];
+
+    await runCli(["setup", "--client=codex", "--print-only"], {
+      startServer: async () => undefined,
+      createService: () => ({}) as unknown as YouTubeService,
+      packageMeta: { name: "vidlens-mcp", version: "1.5.1" },
+      detectClients: () => [{
+        clientId: "codex" as const,
+        name: "Codex",
+        detected: true,
+        supportLevel: "supported" as const,
+        installSurface: "mixed" as const,
+        configPath: join(configDir, ".codex", "config.toml"),
+      }],
+      writeStdout: () => undefined,
+      writeStderr: () => undefined,
+      env: { PATH: binDir },
+      platform: "darwin",
+      homeDir: configDir,
+      nodePath: "/usr/local/bin/node",
+      cliPath: "/repo/dist/cli.js",
+      now: () => new Date("2026-08-22T00:00:00.000Z"),
+      interactive: true,
+      isNpx: false,
+      promptLine: async (question) => {
+        ordinaryPrompts.push(question);
+        return question.includes("Select [1]") ? "2" : "";
+      },
+      promptSecret: async (question) => {
+        secretPrompts.push(question);
+        return "";
+      },
+    });
+
+    assert.ok(secretPrompts.length >= 6, "Enhanced setup should ask optional API keys securely");
+    assert.ok(secretPrompts.every((question) => question.includes("KEY") || question.includes("Key")));
+    assert.ok(!ordinaryPrompts.some((question) => question.includes("KEY") || question.includes("Key")));
   });
 
   it("setup explains missing ffmpeg before social visual indexing fails", async () => {

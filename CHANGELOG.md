@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-08-22
+
+Local cross-client presentation release. VidLens remains a UI-independent MCP server while its
+shared workflow now asks capable response surfaces to present every completed analysis as a
+polished inline result, for one video or many, without prescribing client-specific tools.
+This is the first npm release after `1.4.2`, so npm users upgrade directly from `1.4.2` to `1.5.1`.
+
+### Added
+- A simple interactive Free or Enhanced setup choice. Free needs no API keys; Enhanced walks
+  through optional services one at a time and masks API-key input in the terminal.
+- An outcome-level presentation contract in both distributed `vidlens-workflows` skill layouts,
+  including Markdown fallback, provenance, sample-size, freshness, uncertainty, and untrusted-text
+  requirements.
+- Claude Code setup now installs or updates the bundled workflow skill under the user's Claude
+  skills directory, keeping timestamped backups of the three newest replaced copies.
+- Regression tests for cross-layout contract parity, client-neutral wording, evidence retention,
+  and the managed Claude Code skill installation path.
+
+### Changed
+- Codex setup now migrates the old `vidlens` marketplace entry to `vidlens-local` and enables
+  `vidlens@vidlens-local`. Existing Codex users should rerun `npx vidlens-mcp setup --client codex`
+  after upgrading.
+- Replaced the `exploreYouTube` instruction to create named chart forms with portable,
+  evidence-preserving presentation guidance.
+- Presentation is now independent of video count: the response is polished by default, while the
+  evidence shape determines whether a chart, metric view, timeline, comparison, or structured
+  Markdown is appropriate.
+
 ## [1.5.0] - 2026-08-20
 
 ### Added

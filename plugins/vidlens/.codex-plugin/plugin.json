@@ -1,6 +1,6 @@
 {
   "name": "vidlens",
-  "version": "1.5.0",
+  "version": "1.5.1+codex.20260822011508",
   "description": "Video intelligence for Codex and MCP clients: search, import, index, and inspect video evidence with portable structured results.",
   "author": {
     "name": "Rajan",
