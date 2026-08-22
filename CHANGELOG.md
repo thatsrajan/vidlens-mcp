@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-08-22
+
+### Changed
+- Added the full VidLens product demo to the README as a clickable YouTube preview, so it is
+  available from both the GitHub project page and the npm package page.
+
 ## [1.5.1] - 2026-08-22
 
 Local cross-client presentation release. VidLens remains a UI-independent MCP server while its

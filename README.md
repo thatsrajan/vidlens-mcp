@@ -21,6 +21,18 @@ VidLens is an [MCP](https://modelcontextprotocol.io/) server that gives your AI 
 
 No API keys to start. Works in Claude Desktop, Claude Code, and Codex. Capable clients can turn VidLens's structured results into native charts, cards, tables, and visual reports in their own response surfaces.
 
+## Watch VidLens in action
+
+<p align="center">
+  <a href="https://youtu.be/to1xlXdE1_M">
+    <img src="https://img.youtube.com/vi/to1xlXdE1_M/maxresdefault.jpg" alt="Watch: Your AI Can Read the Web. Now It Can Watch It. — a 1 minute 46 second VidLens demo" width="800" />
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://youtu.be/to1xlXdE1_M"><strong>▶ Watch the 1:46 demo on YouTube</strong></a>
+</p>
+
 ---
 
 ## Try it
