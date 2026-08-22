@@ -2,6 +2,10 @@
   <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/brand/readme-banner-web.png?v=20260820" alt="VidLens — your AI can read the web, now it can also watch it" width="800" />
 </p>
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/demo/hero-dji.gif?v=20260822" alt="A prompt asks VidLens to review five DJI Pocket 4P videos; the view pulls back to the full answer — verdict, spec table, ranked videos and an audience sentiment chart" width="800" />
+</p>
+
 **Your AI can read the web.**\
 **Now it can also watch it.**
 
@@ -27,9 +31,17 @@ Once VidLens is set up, paste any of these into your AI client:
 
 VidLens searches, reads the transcripts across reviewers, and synthesizes consensus and disagreement with sources and timestamps.
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/demo/demo-prompt.gif?v=20260822" alt="A prompt is sent, the agent works, and a three-point summary appears with a link to the source video" width="800" />
+</p>
+
 > "Transcribe this video and summarize it: https://x.com/username/status/123..."
 
 A single public X, Instagram, or TikTok video URL usually needs no API key at all. VidLens fetches it, transcribes it, and keeps the transcript so you can ask follow-up questions later — in this session or any future one.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/demo/demo-summary.gif?v=20260822" alt="VidLens summarizes OpenAI's latest Instagram Reel with the reel title, post date, and verification link" width="800" />
+</p>
 
 > "Find the frame in this video where they show the benchmark chart."
 
@@ -37,7 +49,11 @@ Visual search looks at what is on screen — slides, charts, whiteboards, produc
 
 ### Native client presentation
 
-VidLens returns portable structured evidence: sources, timestamps, scores, OCR, descriptions, provenance, and limitations. Codex, Claude, and other capable clients can compose that evidence into their own native charts, comparison cards, tables, and visual reports. This presentation belongs to the client rather than an embedded VidLens UI. For extracted frame inspection, `searchVisualContent` can also open the existing external browser gallery.
+VidLens returns portable structured evidence: sources, timestamps, scores, OCR, descriptions, provenance, and limitations. Codex, Claude, and other capable clients can compose that evidence into their own native charts, comparison cards, tables, and visual reports.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/demo/demo-doac.gif?v=20260822" alt="A prompt asks VidLens to compare the latest three Diary of a CEO episodes; the agent works through them and renders an inline report with view charts, per-episode sentiment bars, and a source provenance footer" width="800" />
+</p> This presentation belongs to the client rather than an embedded VidLens UI. For extracted frame inspection, `searchVisualContent` can also open the existing external browser gallery.
 
 ---
 
@@ -66,7 +82,7 @@ Everything lives in one directory on your disk. No external database, no Docker.
 npx vidlens-mcp setup
 ```
 
-The wizard detects supported MCP clients (Claude Desktop, Claude Code, and Codex), installs the free local dependencies it needs, and explains which optional upgrades apply to your use case. Normal setup does not ask for API keys, speech-to-text providers, web search, or cookies; use `--advanced` when you want those. For Claude Code, setup registers VidLens in the user MCP registry and checks the result with `claude mcp list` when possible.
+The wizard detects supported MCP clients (Claude Desktop, Claude Code, and Codex), installs the free local dependencies it needs, and explains which optional upgrades apply to your use case. Normal setup does not ask for API keys, speech-to-text providers, web search, or cookies; use `--advanced` when you want those. For Claude Code, setup registers VidLens in the user MCP registry, installs the shared VidLens workflow skill, and checks the MCP result with `claude mcp list` when possible.
 
 ### Manual configuration
 
@@ -125,6 +141,10 @@ VidLens is durable memory for video work, not a per-session scratchpad. Everythi
 ## Beyond YouTube
 
 For X, Instagram, TikTok, and generic video pages, VidLens uses a capability ladder: it takes the cheapest route that works, and an API key is an uplift, not a prerequisite.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/thatsrajan/vidlens-mcp/main/assets/demo/demo-phone.gif?v=20260822" alt="On a mirrored iPhone, a prompt asks the agent what an X video shared and what its comments said" width="800" />
+</p>
 
 | Route | Cost | Best for | What happens |
 |---|---|---|---|
